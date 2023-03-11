@@ -3,6 +3,8 @@ use std::fs;
 
 const MOV_REG_MEM_TO_FROM_REG_BITS: u8 = 0x88;
 const MOV_IMM_TO_REG_BITS: u8 = 0xB0;
+const MOV_MEM_TO_ACC_BITS: u8 = 0xA0;
+const MOV_ACC_TO_MEM_BITS: u8 = 0xA2;
 
 const REG_FIELD_ENCODINGS: &'static [&str] = &[
     "al", "cl", "dl", "bl", "ah", "ch", "dh", "bh", // w = 0
@@ -30,32 +32,7 @@ fn main() {
     let byte_count: usize = bytes.len();
     while byte_index < byte_count {
         let byte: u8 = bytes[byte_index];
-        if byte & MOV_IMM_TO_REG_BITS == MOV_IMM_TO_REG_BITS {
-            let w_bit: u8 = (byte & 0x8) >> 3;
-            let reg_field: u8 = byte & 0x7;
-
-            let immediate: u16 = if w_bit == 1 {
-                byte_index += 1;
-                let immediate_low: u8 = bytes[byte_index];
-
-                byte_index += 1;
-                let immediate_high: u8 = bytes[byte_index];
-
-                ((immediate_high as u16) << 8) + immediate_low as u16
-            } else {
-                byte_index += 1;
-                bytes[byte_index] as u16
-            };
-
-            let field_index: usize = (reg_field + 8 * w_bit) as usize;
-            debug_assert!(field_index < REG_FIELD_ENCODINGS.len());
-
-            let field: &str = REG_FIELD_ENCODINGS[field_index];
-
-            println!("mov {}, {}", field, immediate);
-
-            byte_index += 1;
-        } else if byte & MOV_REG_MEM_TO_FROM_REG_BITS == MOV_REG_MEM_TO_FROM_REG_BITS {
+        if byte & 0xFC == MOV_REG_MEM_TO_FROM_REG_BITS {
             let d_bit: u8 = (byte & 0x2) >> 1;  // 1 <=> reg field gives destination
             let w_bit: u8 = byte & 0x1;         // 1 <=> wide version of instruction
             
@@ -162,6 +139,69 @@ fn main() {
                     debug_assert!(false);
                 }
             }
+        } else if byte & 0xF0 == MOV_IMM_TO_REG_BITS {
+            let w_bit: u8 = (byte & 0x08) >> 3;
+            let reg_field: u8 = byte & 0x07;
+
+            let immediate: u16 = if w_bit == 1 {
+                byte_index += 1;
+                let immediate_low: u8 = bytes[byte_index];
+
+                byte_index += 1;
+                let immediate_high: u8 = bytes[byte_index];
+
+                ((immediate_high as u16) << 8) + immediate_low as u16
+            } else {
+                byte_index += 1;
+                bytes[byte_index] as u16
+            };
+
+            let field_index: usize = (reg_field + 8 * w_bit) as usize;
+            debug_assert!(field_index < REG_FIELD_ENCODINGS.len());
+
+            let field: &str = REG_FIELD_ENCODINGS[field_index];
+
+            println!("mov {}, {}", field, immediate);
+
+            byte_index += 1;
+        } else if byte & 0xFE == MOV_MEM_TO_ACC_BITS {
+            let w_bit: u8 = byte & 0x01;
+
+            let address: u16 = if w_bit == 1 {
+                byte_index += 1;
+                let address_low: u8 = bytes[byte_index];
+
+                byte_index += 1;
+                let address_high: u8 = bytes[byte_index];
+
+                ((address_high as u16) << 8) + address_low as u16
+            } else {
+                byte_index += 1;
+                bytes[byte_index] as u16
+            };
+
+            println!("mov ax, [{}]", address);
+
+            byte_index += 1;
+        } else if byte & 0xFE == MOV_ACC_TO_MEM_BITS {
+            let w_bit: u8 = byte & 0x01;
+
+            let address: u16 = if w_bit == 1 {
+                byte_index += 1;
+                let address_low: u8 = bytes[byte_index];
+
+                byte_index += 1;
+                let address_high: u8 = bytes[byte_index];
+
+                ((address_high as u16) << 8) + address_low as u16
+            } else {
+                byte_index += 1;
+                bytes[byte_index] as u16
+            };
+
+            println!("mov [{}], ax", address);
+
+            byte_index += 1;
         } else {
             debug_assert!(false);   // Not handling any other instructions atm
         }
