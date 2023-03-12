@@ -2,3 +2,4 @@
 test_asm/listing_0037_single_register_mov
 test_asm/listing_0038_many_register_mov
 test_asm/listing_0039_more_movs
+test_asm/listing_0041_add_sub_cmp_jnz
