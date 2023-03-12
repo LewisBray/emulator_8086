@@ -329,6 +329,26 @@ fn decode_arithmetic_imm_to_acc_encoding(byte_stream: &mut ByteStream) {
     println!("{} {}, {}", instruction, field, immediate);
 }
 
+const CONDITIONAL_JUMP_INSTRUCTION_BITS: u8 = 0x70;
+
+const CONDITIONAL_JUMP_INSTRUCTION_ENCODINGS: &'static [&str] = &[
+    "jo", "jno", "jb", "jnb", "je", "jne", "jbe", "ja",
+    "js", "jns", "jp", "jnp", "jl", "jnl", "jle", "jg"
+];
+
+fn decode_conditional_jump_encoding(byte_stream: &mut ByteStream) {
+    let byte: u8 = grab_byte(byte_stream);
+
+    let instruction_index: usize = (byte & 0x0F) as usize;
+    debug_assert!(instruction_index < CONDITIONAL_JUMP_INSTRUCTION_ENCODINGS.len());
+
+    let instruction: &str = CONDITIONAL_JUMP_INSTRUCTION_ENCODINGS[instruction_index];
+
+    let offset: i8 = grab_byte(byte_stream) as i8;
+
+    println!("{} {}", instruction, offset);
+}
+
 fn main() {
     let input_file = env::args().nth(1).expect("Please specify an input file");
     let bytes: Vec<u8> = fs::read(input_file).expect("Missing instruction stream file");
@@ -477,6 +497,8 @@ fn main() {
             decode_arithmetic_signed_imm_to_reg_encoding(&mut byte_stream);
         } else if byte & 0xC4 == ARITHMETIC_IMM_TO_ACC_BITS {
             decode_arithmetic_imm_to_acc_encoding(&mut byte_stream);
+        } else if byte & 0xF0 == CONDITIONAL_JUMP_INSTRUCTION_BITS {
+            decode_conditional_jump_encoding(&mut byte_stream);
         } else {
             debug_assert!(false);   // Not handling any other instructions atm
         }
