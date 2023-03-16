@@ -39,6 +39,8 @@ fn grab_word(byte_stream: &mut ByteStream) -> u16 {
     return word;
 }
 
+const DATA_SIZE_ENCODINGS: &'static [&str] = &["byte", "word"];
+
 const REG_FIELD_ENCODINGS: &'static [&str] = &[
     "al", "cl", "dl", "bl", "ah", "ch", "dh", "bh", // w = 0
     "ax", "cx", "dx", "bx", "sp", "bp", "si", "di"  // w = 1
@@ -56,9 +58,266 @@ const REG_EXPRESSION_ENCODINGS: &'static [&str] = &[
 ];
 
 const MOV_REG_MEM_TO_FROM_REG_BITS: u8 = 0x88;
+const MOV_IMM_TO_REG_MEM_BITS: u8 = 0xC6;
 const MOV_IMM_TO_REG_BITS: u8 = 0xB0;
 const MOV_MEM_TO_ACC_BITS: u8 = 0xA0;
 const MOV_ACC_TO_MEM_BITS: u8 = 0xA2;
+
+fn decode_mov_mem_reg_to_from_reg_encoding(byte_stream: &mut ByteStream) {
+    let byte: u8 = grab_byte(byte_stream);
+    let d_bit: u8 = (byte & 0x2) >> 1;  // 1 <=> reg field gives destination
+    let w_bit: u8 = byte & 0x1;         // 1 <=> wide version of instruction
+    
+    let byte: u8 = grab_byte(byte_stream);
+
+    let mod_field: u8 = (byte & 0xC0) >> 6;
+    let reg_field: u8 = (byte & 0x38) >> 3;
+    let rm_field: u8 = byte & 0x07;
+
+    match mod_field {
+        0x00 => {
+            let expression_index: usize = rm_field as usize;
+            debug_assert!(expression_index < REG_EXPRESSION_ENCODINGS.len());
+            let field_index: usize = (reg_field + 8 * w_bit) as usize;
+            debug_assert!(field_index < REG_FIELD_ENCODINGS.len());
+
+            let field: &str = REG_FIELD_ENCODINGS[field_index];
+
+            if expression_index == 6 {
+                let address: u16 = if w_bit == 1 {
+                    grab_word(byte_stream)
+                } else {
+                    grab_byte(byte_stream) as u16
+                };
+
+                if d_bit == 1 {
+                    println!("mov {}, [{}]", field, address);
+                } else {
+                    println!("mov [{}], {}", address, field);
+                }
+            } else {
+                let expression: &str = REG_EXPRESSION_ENCODINGS[expression_index];
+
+                if d_bit == 1 {
+                    println!("mov {}, [{}]", field, expression);
+                } else {
+                    println!("mov [{}], {}", expression, field);
+                }
+            }
+        },
+        0x01 => {
+            let expression_index: usize = rm_field as usize;
+            debug_assert!(expression_index < REG_EXPRESSION_ENCODINGS.len());
+            let field_index: usize = (reg_field + 8 * w_bit) as usize;
+            debug_assert!(field_index < REG_FIELD_ENCODINGS.len());
+
+            let expression: &str = REG_EXPRESSION_ENCODINGS[expression_index];
+            let field: &str = REG_FIELD_ENCODINGS[field_index];
+
+            let displacement: i8 = grab_byte(byte_stream) as i8;
+            let sign: char = if displacement > 0 { '+' } else { '-' };
+
+            if d_bit == 1 {
+                if displacement != 0 {
+                    println!("mov {}, [{} {} {}]", field, expression, sign, displacement.abs());
+                } else {
+                    println!("mov {}, [{}]", field, expression);
+                }
+            } else {
+                if displacement != 0 {
+                    println!("mov [{} {} {}], {}", expression, sign, displacement.abs(), field);
+                } else {
+                    println!("mov [{}], {}", expression, field);
+                }
+            }
+        },
+        0x02 => {
+            let expression_index: usize = rm_field as usize;
+            debug_assert!(expression_index < REG_EXPRESSION_ENCODINGS.len());
+            let field_index: usize = (reg_field + 8 * w_bit) as usize;
+            debug_assert!(field_index < REG_FIELD_ENCODINGS.len());
+
+            let expression: &str = REG_EXPRESSION_ENCODINGS[expression_index];
+            let field: &str = REG_FIELD_ENCODINGS[field_index];
+
+            let displacement: i16 = grab_word(byte_stream) as i16;
+            let sign: char = if displacement > 0 { '+' } else { '-' };
+
+            if d_bit == 1 {
+                if displacement != 0 {
+                    println!("mov {}, [{} {} {}]", field, expression, sign, displacement.abs());
+                } else {
+                    println!("mov {}, [{}]", field, expression);
+                }
+            } else {
+                if displacement != 0 {
+                    println!("mov [{} {} {}], {}", expression, sign, displacement.abs(), field);
+                } else {
+                    println!("mov [{}], {}", expression, field);
+                }
+            }
+        },
+        0x03 => {
+            let source_index: usize = ((1 - d_bit) * reg_field + d_bit * rm_field + 8 * w_bit) as usize;
+            debug_assert!(source_index < REG_FIELD_ENCODINGS.len());
+            let destination_index: usize = (d_bit * reg_field + (1 - d_bit) * rm_field + 8 * w_bit) as usize;
+            debug_assert!(destination_index < REG_FIELD_ENCODINGS.len());
+
+            let source: &str = REG_FIELD_ENCODINGS[source_index];
+            let destination: &str = REG_FIELD_ENCODINGS[destination_index];
+
+            println!("mov {}, {}", destination, source);
+        },
+        _ => {
+            debug_assert!(false);
+        }
+    }
+}
+
+fn decode_mov_imm_to_reg_mem_encoding(byte_stream: &mut ByteStream) {
+    let byte: u8 = grab_byte(byte_stream);
+    let w_bit: u8 = byte & 0x01;
+
+    let byte: u8 = grab_byte(byte_stream);
+    debug_assert!(byte & 0x38 == 0);
+    let mod_field: u8 = (byte & 0xC0) >> 6;
+    let rm_field: u8 = byte & 0x07;
+
+    match mod_field {
+        0x00 => {
+            let expression_index: usize = rm_field as usize;
+            debug_assert!(expression_index < REG_EXPRESSION_ENCODINGS.len());
+
+            let size: &str = DATA_SIZE_ENCODINGS[w_bit as usize];
+
+            if expression_index == 6 {
+                let address: u16 = if w_bit == 1 {
+                    grab_word(byte_stream)
+                } else {
+                    grab_byte(byte_stream) as u16
+                };
+
+                let data: u16 = if w_bit == 1 {
+                    grab_word(byte_stream)
+                } else {
+                    grab_byte(byte_stream) as u16
+                };
+
+                println!("mov [{}], {} {}", address, size, data);
+            } else {
+                let expression: &str = REG_EXPRESSION_ENCODINGS[expression_index];
+
+                let data: u16 = if w_bit == 1 {
+                    grab_word(byte_stream)
+                } else {
+                    grab_byte(byte_stream) as u16
+                };
+
+                println!("mov [{}], {} {}", expression, size, data);
+            }
+        },
+        0x01 => {
+            let expression_index: usize = rm_field as usize;
+            debug_assert!(expression_index < REG_EXPRESSION_ENCODINGS.len());
+
+            let expression: &str = REG_EXPRESSION_ENCODINGS[expression_index];
+
+            let size: &str = DATA_SIZE_ENCODINGS[w_bit as usize];
+
+            let displacement: i8 = grab_byte(byte_stream) as i8;
+            let sign: char = if displacement > 0 { '+' } else { '-' };
+
+            let data: u16 = if w_bit == 1 {
+                grab_word(byte_stream)
+            } else {
+                grab_byte(byte_stream) as u16
+            };
+
+            println!("mov [{} {} {}], {} {}", expression, sign, displacement.abs(), size, data);
+        },
+        0x02 => {
+            let expression_index: usize = rm_field as usize;
+            debug_assert!(expression_index < REG_EXPRESSION_ENCODINGS.len());
+
+            let expression: &str = REG_EXPRESSION_ENCODINGS[expression_index];
+
+            let size: &str = DATA_SIZE_ENCODINGS[w_bit as usize];
+
+            let displacement: i16 = grab_word(byte_stream) as i16;
+            let sign: char = if displacement > 0 { '+' } else { '-' };
+
+            let data: u16 = if w_bit == 1 {
+                grab_word(byte_stream)
+            } else {
+                grab_byte(byte_stream) as u16
+            };
+
+            println!("mov [{} {} {}], {} {}", expression, sign, displacement.abs(), size, data);
+        },
+        0x03 => {
+            let field_index: usize = (rm_field + 8 * w_bit) as usize;
+            debug_assert!(field_index < REG_FIELD_ENCODINGS.len());
+
+            let destination: &str = REG_FIELD_ENCODINGS[field_index];
+
+            let data: u16 = if w_bit == 1 {
+                grab_word(byte_stream)
+            } else {
+                grab_byte(byte_stream) as u16
+            };
+
+            println!("mov {}, {}", destination, data);
+        },
+        _ => {
+            debug_assert!(false);
+        }
+    }    
+}
+
+fn decode_mov_imm_to_reg_encoding(byte_stream: &mut ByteStream) {
+    let byte: u8 = grab_byte(byte_stream);
+    let w_bit: u8 = (byte & 0x08) >> 3;
+    let reg_field: u8 = byte & 0x07;
+
+    let immediate: u16 = if w_bit == 1 {
+        grab_word(byte_stream)
+    } else {
+        grab_byte(byte_stream) as u16
+    };
+
+    let field_index: usize = (reg_field + 8 * w_bit) as usize;
+    debug_assert!(field_index < REG_FIELD_ENCODINGS.len());
+
+    let field: &str = REG_FIELD_ENCODINGS[field_index];
+
+    println!("mov {}, {}", field, immediate);
+}
+
+fn decode_mov_mem_to_acc_encoding(byte_stream: &mut ByteStream) {
+    let byte: u8 = grab_byte(byte_stream);
+    let w_bit: u8 = byte & 0x01;
+
+    let address: u16 = if w_bit == 1 {
+        grab_word(byte_stream)
+    } else {
+        grab_byte(byte_stream) as u16
+    };
+
+    println!("mov ax, [{}]", address);
+}
+
+fn decode_mov_acc_to_mem_encoding(byte_stream: &mut ByteStream) {
+    let byte: u8 = grab_byte(byte_stream);
+    let w_bit: u8 = byte & 0x01;
+
+    let address: u16 = if w_bit == 1 {
+        grab_word(byte_stream)
+    } else {
+        grab_byte(byte_stream) as u16
+    };
+
+    println!("mov [{}], ax", address);
+}
 
 const ARITHMETIC_REG_MEM_WITH_REG_TO_EITHER_BITS: u8 = 0x00;
 const ARITHMETIC_IMM_TO_REG_MEM_BITS: u8 = 0x80;
@@ -92,13 +351,28 @@ fn decode_arithmetic_mem_reg_with_reg_to_either_encoding(byte_stream: &mut ByteS
             let field_index: usize = (reg_field + 8 * w_bit) as usize;
             debug_assert!(field_index < REG_FIELD_ENCODINGS.len());
 
-            let expression: &str = REG_EXPRESSION_ENCODINGS[expression_index];
             let field: &str = REG_FIELD_ENCODINGS[field_index];
 
-            if d_bit == 1 {
-                println!("{} {}, [{}]", instruction, field, expression);
+            if expression_index == 6 {
+                let address: u16 = if w_bit == 1 {
+                    grab_word(byte_stream)
+                } else {
+                    grab_byte(byte_stream) as u16
+                };
+
+                if d_bit == 1 {
+                    println!("{} {}, [{}]", instruction, field, address);
+                } else {
+                    println!("{} [{}], {}", instruction, address, field);
+                }
             } else {
-                println!("{} [{}], {}", instruction, expression, field);
+                let expression: &str = REG_EXPRESSION_ENCODINGS[expression_index];
+
+                if d_bit == 1 {
+                    println!("{} {}, [{}]", instruction, field, expression);
+                } else {
+                    println!("{} [{}], {}", instruction, expression, field);
+                }
             }
         },
         0x01 => {
@@ -110,17 +384,18 @@ fn decode_arithmetic_mem_reg_with_reg_to_either_encoding(byte_stream: &mut ByteS
             let expression: &str = REG_EXPRESSION_ENCODINGS[expression_index];
             let field: &str = REG_FIELD_ENCODINGS[field_index];
 
-            let displacement: u8 = grab_byte(byte_stream);
+            let displacement: i8 = grab_byte(byte_stream) as i8;
+            let sign: char = if displacement > 0 { '+' } else { '-' };
 
             if d_bit == 1 {
                 if displacement != 0 {
-                    println!("{} {}, [{} + {}]", instruction, field, expression, displacement);
+                    println!("{} {}, [{} {} {}]", instruction, field, expression, sign, displacement.abs());
                 } else {
                     println!("{} {}, [{}]", instruction, field, expression);
                 }
             } else {
                 if displacement != 0 {
-                    println!("{} [{} + {}], {}", instruction, expression, displacement, field);
+                    println!("{} [{} {} {}], {}", instruction, expression, sign, displacement.abs(), field);
                 } else {
                     println!("{} [{}], {}", instruction, expression, field);
                 }
@@ -135,17 +410,18 @@ fn decode_arithmetic_mem_reg_with_reg_to_either_encoding(byte_stream: &mut ByteS
             let expression: &str = REG_EXPRESSION_ENCODINGS[expression_index];
             let field: &str = REG_FIELD_ENCODINGS[field_index];
 
-            let displacement: u16 = grab_word(byte_stream);
+            let displacement: i16 = grab_word(byte_stream) as i16;
+            let sign: char = if displacement > 0 { '+' } else { '-' };
 
             if d_bit == 1 {
                 if displacement != 0 {
-                    println!("{} {}, [{} + {}]", instruction, field, expression, displacement);
+                    println!("{} {}, [{} {} {}]", instruction, field, expression, sign, displacement.abs());
                 } else {
                     println!("{} {}, [{}]", instruction, field, expression);
                 }
             } else {
                 if displacement != 0 {
-                    println!("{} [{} + {}], {}", instruction, expression, displacement, field);
+                    println!("{} [{} {} {}], {}", instruction, expression, sign, displacement.abs(), field);
                 } else {
                     println!("{} [{}], {}", instruction, expression, field);
                 }
@@ -188,7 +464,7 @@ fn decode_arithmetic_signed_imm_to_reg_encoding(byte_stream: &mut ByteStream) {
             let expression_index: usize = rm_field as usize;
             debug_assert!(expression_index < REG_EXPRESSION_ENCODINGS.len());
 
-            let size: &str = if w_bit == 1 { "word" } else { "byte" };
+            let size: &str = DATA_SIZE_ENCODINGS[w_bit as usize];
 
             if expression_index == 6 {
                 let address: u16 = if w_bit == 1 {
@@ -230,7 +506,8 @@ fn decode_arithmetic_signed_imm_to_reg_encoding(byte_stream: &mut ByteStream) {
 
             let expression: &str = REG_EXPRESSION_ENCODINGS[expression_index];
 
-            let displacement: u8 = grab_byte(byte_stream);
+            let displacement: i8 = grab_byte(byte_stream) as i8;
+            let sign: char = if displacement > 0 { '+' } else { '-' };
 
             let data: u16 = if s_bit == 0 && w_bit == 1 {
                 grab_word(byte_stream)
@@ -238,17 +515,17 @@ fn decode_arithmetic_signed_imm_to_reg_encoding(byte_stream: &mut ByteStream) {
                 grab_byte(byte_stream) as u16
             };
 
-            let size: &str = if w_bit == 1 { "word" } else { "byte" };
+            let size: &str = DATA_SIZE_ENCODINGS[w_bit as usize];
 
             if s_bit == 1 {
                 if displacement != 0 {
-                    println!("{} {} [{} + {}], {}", instruction, size, expression, displacement, data as i8);
+                    println!("{} {} [{} {} {}], {}", instruction, size, expression, sign, displacement.abs(), data as i8);
                 } else {
                     println!("{} {} [{}], {}", instruction, size, expression, data as i8);
                 }
             } else {
                 if displacement != 0 {
-                    println!("{} {} [{} + {}], {}", instruction, size, expression, displacement, data);
+                    println!("{} {} [{} {} {}], {}", instruction, size, expression, sign, displacement.abs(), data);
                 } else {
                     println!("{} {} [{}], {}", instruction, size, expression, data);
                 }
@@ -260,7 +537,8 @@ fn decode_arithmetic_signed_imm_to_reg_encoding(byte_stream: &mut ByteStream) {
 
             let expression: &str = REG_EXPRESSION_ENCODINGS[expression_index];
 
-            let displacement: u16 = grab_word(byte_stream);
+            let displacement: i16 = grab_word(byte_stream) as i16;
+            let sign: char = if displacement > 0 { '+' } else { '-' };
 
             let data: u16 = if s_bit == 0 && w_bit == 1 {
                 grab_word(byte_stream)
@@ -268,17 +546,17 @@ fn decode_arithmetic_signed_imm_to_reg_encoding(byte_stream: &mut ByteStream) {
                 grab_byte(byte_stream) as u16
             };
 
-            let size: &str = if w_bit == 1 { "word" } else { "byte" };
+            let size: &str = DATA_SIZE_ENCODINGS[w_bit as usize];
 
             if s_bit == 1 {
                 if displacement != 0 {
-                    println!("{} {} [{} + {}], {}", instruction, size, expression, displacement, data as i8);
+                    println!("{} {} [{} {} {}], {}", instruction, size, expression, sign, displacement.abs(), data as i8);
                 } else {
                     println!("{} {} [{}], {}", instruction, size, expression, data as i8);
                 }
             } else {
                 if displacement != 0 {
-                    println!("{} {} [{} + {}], {}", instruction, size, expression, displacement, data);
+                    println!("{} {} [{} {} {}], {}", instruction, size, expression, sign, displacement.abs(), data);
                 } else {
                     println!("{} {} [{}], {}", instruction, size, expression, data);
                 }
@@ -380,136 +658,15 @@ fn main() {
     while byte_stream.index < byte_count {
         let byte: u8 = peek_byte(&byte_stream);
         if byte & 0xFC == MOV_REG_MEM_TO_FROM_REG_BITS {
-            let byte: u8 = grab_byte(&mut byte_stream);
-            let d_bit: u8 = (byte & 0x2) >> 1;  // 1 <=> reg field gives destination
-            let w_bit: u8 = byte & 0x1;         // 1 <=> wide version of instruction
-            
-            let byte: u8 = grab_byte(&mut byte_stream);
-
-            let mod_field: u8 = (byte & 0xC0) >> 6;
-            let reg_field: u8 = (byte & 0x38) >> 3;
-            let rm_field: u8 = byte & 0x07;
-
-            match mod_field {
-                0x00 => {
-                    let expression_index: usize = rm_field as usize;
-                    debug_assert!(expression_index < REG_EXPRESSION_ENCODINGS.len());
-                    let field_index: usize = (reg_field + 8 * w_bit) as usize;
-                    debug_assert!(field_index < REG_FIELD_ENCODINGS.len());
-
-                    let expression: &str = REG_EXPRESSION_ENCODINGS[expression_index];
-                    let field: &str = REG_FIELD_ENCODINGS[field_index];
-
-                    if d_bit == 1 {
-                        println!("mov {}, [{}]", field, expression);
-                    } else {
-                        println!("mov [{}], {}", expression, field);
-                    }
-                },
-                0x01 => {
-                    let expression_index: usize = rm_field as usize;
-                    debug_assert!(expression_index < REG_EXPRESSION_ENCODINGS.len());
-                    let field_index: usize = (reg_field + 8 * w_bit) as usize;
-                    debug_assert!(field_index < REG_FIELD_ENCODINGS.len());
-
-                    let expression: &str = REG_EXPRESSION_ENCODINGS[expression_index];
-                    let field: &str = REG_FIELD_ENCODINGS[field_index];
-
-                    let displacement: u8 = grab_byte(&mut byte_stream);
-
-                    if d_bit == 1 {
-                        if displacement != 0 {
-                            println!("mov {}, [{} + {}]", field, expression, displacement);
-                        } else {
-                            println!("mov {}, [{}]", field, expression);
-                        }
-                    } else {
-                        if displacement != 0 {
-                            println!("mov [{} + {}], {}", expression, displacement, field);
-                        } else {
-                            println!("mov [{}], {}", expression, field);
-                        }
-                    }
-                },
-                0x02 => {
-                    let expression_index: usize = rm_field as usize;
-                    debug_assert!(expression_index < REG_EXPRESSION_ENCODINGS.len());
-                    let field_index: usize = (reg_field + 8 * w_bit) as usize;
-                    debug_assert!(field_index < REG_FIELD_ENCODINGS.len());
-
-                    let expression: &str = REG_EXPRESSION_ENCODINGS[expression_index];
-                    let field: &str = REG_FIELD_ENCODINGS[field_index];
-
-                    let displacement: u16 = grab_word(&mut byte_stream);
-
-                    if d_bit == 1 {
-                        if displacement != 0 {
-                            println!("mov {}, [{} + {}]", field, expression, displacement);
-                        } else {
-                            println!("mov {}, [{}]", field, expression);
-                        }
-                    } else {
-                        if displacement != 0 {
-                            println!("mov [{} + {}], {}", expression, displacement, field);
-                        } else {
-                            println!("mov [{}], {}", expression, field);
-                        }
-                    }
-                },
-                0x03 => {
-                    let source_index: usize = ((1 - d_bit) * reg_field + d_bit * rm_field + 8 * w_bit) as usize;
-                    debug_assert!(source_index < REG_FIELD_ENCODINGS.len());
-                    let destination_index: usize = (d_bit * reg_field + (1 - d_bit) * rm_field + 8 * w_bit) as usize;
-                    debug_assert!(destination_index < REG_FIELD_ENCODINGS.len());
-
-                    let source: &str = REG_FIELD_ENCODINGS[source_index];
-                    let destination: &str = REG_FIELD_ENCODINGS[destination_index];
-
-                    println!("mov {}, {}", destination, source);
-                },
-                _ => {
-                    debug_assert!(false);
-                }
-            }
+            decode_mov_mem_reg_to_from_reg_encoding(&mut byte_stream);
+        } else if byte & 0xFE == MOV_IMM_TO_REG_MEM_BITS {
+            decode_mov_imm_to_reg_mem_encoding(&mut byte_stream);
         } else if byte & 0xF0 == MOV_IMM_TO_REG_BITS {
-            let byte: u8 = grab_byte(&mut byte_stream);
-            let w_bit: u8 = (byte & 0x08) >> 3;
-            let reg_field: u8 = byte & 0x07;
-
-            let immediate: u16 = if w_bit == 1 {
-                grab_word(&mut byte_stream)
-            } else {
-                grab_byte(&mut byte_stream) as u16
-            };
-
-            let field_index: usize = (reg_field + 8 * w_bit) as usize;
-            debug_assert!(field_index < REG_FIELD_ENCODINGS.len());
-
-            let field: &str = REG_FIELD_ENCODINGS[field_index];
-
-            println!("mov {}, {}", field, immediate);
+            decode_mov_imm_to_reg_encoding(&mut byte_stream);
         } else if byte & 0xFE == MOV_MEM_TO_ACC_BITS {
-            let byte: u8 = grab_byte(&mut byte_stream);
-            let w_bit: u8 = byte & 0x01;
-
-            let address: u16 = if w_bit == 1 {
-                grab_word(&mut byte_stream)
-            } else {
-                grab_byte(&mut byte_stream) as u16
-            };
-
-            println!("mov ax, [{}]", address);
+            decode_mov_mem_to_acc_encoding(&mut byte_stream);
         } else if byte & 0xFE == MOV_ACC_TO_MEM_BITS {
-            let byte: u8 = grab_byte(&mut byte_stream);
-            let w_bit: u8 = byte & 0x01;
-
-            let address: u16 = if w_bit == 1 {
-                grab_word(&mut byte_stream)
-            } else {
-                grab_byte(&mut byte_stream) as u16
-            };
-
-            println!("mov [{}], ax", address);
+            decode_mov_acc_to_mem_encoding(&mut byte_stream);
         } else if byte & 0xC4 == ARITHMETIC_REG_MEM_WITH_REG_TO_EITHER_BITS {
             decode_arithmetic_mem_reg_with_reg_to_either_encoding(&mut byte_stream);
         } else if byte & 0xFC == ARITHMETIC_IMM_TO_REG_MEM_BITS {
