@@ -128,6 +128,70 @@ fn set_di(registers: &mut Registers, value: u16) {
     registers.di = value;
 }
 
+fn get_al(registers: &Registers) -> u16 {
+    return registers.ax & 0x00FF;
+}
+
+fn get_ah(registers: &Registers) -> u16 {
+    return registers.ax & 0xFF00;
+}
+
+fn get_bl(registers: &Registers) -> u16 {
+    return registers.bx & 0x00FF;
+}
+
+fn get_bh(registers: &Registers) -> u16 {
+    return registers.bx & 0xFF00;
+}
+
+fn get_cl(registers: &Registers) -> u16 {
+    return registers.cx & 0x00FF;
+}
+
+fn get_ch(registers: &Registers) -> u16 {
+    return registers.cx & 0xFF00;
+}
+
+fn get_dl(registers: &Registers) -> u16 {
+    return registers.dx & 0x00FF;
+}
+
+fn get_dh(registers: &Registers) -> u16 {
+    return registers.dx & 0xFF00;
+}
+
+fn get_ax(registers: &Registers) -> u16 {
+    return registers.ax;
+}
+
+fn get_bx(registers: &Registers) -> u16 {
+    return registers.bx;
+}
+
+fn get_cx(registers: &Registers) -> u16 {
+    return registers.cx;
+}
+
+fn get_dx(registers: &Registers) -> u16 {
+    return registers.dx;
+}
+
+fn get_sp(registers: &Registers) -> u16 {
+    return registers.sp;
+}
+
+fn get_bp(registers: &Registers) -> u16 {
+    return registers.bp;
+}
+
+fn get_si(registers: &Registers) -> u16 {
+    return registers.si;
+}
+
+fn get_di(registers: &Registers) -> u16 {
+    return registers.di;
+}
+
 const DATA_SIZE_ENCODINGS: &'static [&str] = &["byte", "word"];
 
 type GrabDataFn = fn(&mut ByteStream) -> u16;
@@ -142,6 +206,12 @@ type SetRegisterFn = fn(&mut Registers, u16);
 const SET_REGISTER_FNS: &'static [SetRegisterFn] = &[
     set_al, set_cl, set_dl, set_bl, set_ah, set_ch, set_dh, set_bh,
     set_ax, set_cx, set_dx, set_bx, set_sp, set_bp, set_si, set_di
+];
+
+type GetRegisterFn = fn(&Registers) -> u16;
+const GET_REGISTER_FNS: &'static [GetRegisterFn] = &[
+    get_al, get_cl, get_dl, get_bl, get_ah, get_ch, get_dh, get_bh,
+    get_ax, get_cx, get_dx, get_bx, get_sp, get_bp, get_si, get_di
 ];
 
 const REG_EXPRESSION_ENCODINGS: &'static [&str] = &[
@@ -161,7 +231,7 @@ const MOV_IMM_TO_REG_BITS: u8 = 0xB0;
 const MOV_MEM_TO_ACC_BITS: u8 = 0xA0;
 const MOV_ACC_TO_MEM_BITS: u8 = 0xA2;
 
-fn decode_mov_mem_reg_to_from_reg_encoding(byte_stream: &mut ByteStream) {
+fn decode_mov_mem_reg_to_from_reg_encoding(byte_stream: &mut ByteStream, registers: &mut Registers) {
     let byte: u8 = grab_byte(byte_stream);
     let d_bit: u8 = (byte & 0x2) >> 1;  // 1 <=> reg field gives destination
     let w_bit: u8 = byte & 0x1;         // 1 <=> wide version of instruction
@@ -260,6 +330,12 @@ fn decode_mov_mem_reg_to_from_reg_encoding(byte_stream: &mut ByteStream) {
             debug_assert!(source_index < REG_FIELD_ENCODINGS.len());
             let destination_index: usize = (d_bit * reg_field + (1 - d_bit) * rm_field + 8 * w_bit) as usize;
             debug_assert!(destination_index < REG_FIELD_ENCODINGS.len());
+
+            let get_source_register: GetRegisterFn = GET_REGISTER_FNS[source_index];
+            let source_value: u16 = get_source_register(registers);
+
+            let set_destination_register: SetRegisterFn = SET_REGISTER_FNS[destination_index];
+            set_destination_register(registers, source_value);
 
             let source: &str = REG_FIELD_ENCODINGS[source_index];
             let destination: &str = REG_FIELD_ENCODINGS[destination_index];
@@ -760,7 +836,7 @@ fn main() {
     while byte_stream.index < byte_count {
         let byte: u8 = peek_byte(&byte_stream);
         if byte & 0xFC == MOV_REG_MEM_TO_FROM_REG_BITS {
-            decode_mov_mem_reg_to_from_reg_encoding(&mut byte_stream);
+            decode_mov_mem_reg_to_from_reg_encoding(&mut byte_stream, &mut registers);
         } else if byte & 0xFE == MOV_IMM_TO_REG_MEM_BITS {
             decode_mov_imm_to_reg_mem_encoding(&mut byte_stream);
         } else if byte & 0xF0 == MOV_IMM_TO_REG_BITS {
