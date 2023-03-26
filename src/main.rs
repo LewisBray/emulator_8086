@@ -24,6 +24,11 @@ fn grab_byte(byte_stream: &mut ByteStream) -> u8 {
     return byte;
 }
 
+fn grab_byte_as_word(byte_stream: &mut ByteStream) -> u16 {
+    let byte: u8  = grab_byte(byte_stream);
+    return byte as u16;
+}
+
 fn grab_word(byte_stream: &mut ByteStream) -> u16 {
     debug_assert!(!byte_stream.bytes.is_empty());
     debug_assert!(byte_stream.index < byte_stream.bytes.len() - 1);
@@ -39,11 +44,104 @@ fn grab_word(byte_stream: &mut ByteStream) -> u16 {
     return word;
 }
 
+#[derive(Debug)]
+struct Registers {
+    ax: u16,
+    bx: u16,
+    cx: u16,
+    dx: u16,
+    sp: u16,
+    bp: u16,
+    si: u16,
+    di: u16
+}
+
+fn set_al(registers: &mut Registers, value: u16) {
+    debug_assert!(value & 0x00FF == value);
+    registers.ax = (registers.ax & 0xFF00) + value;
+}
+
+fn set_ah(registers: &mut Registers, value: u16) {
+    debug_assert!(value & 0x00FF == value);
+    registers.ax = (registers.ax & 0x00FF) + (value << 8);
+}
+
+fn set_bl(registers: &mut Registers, value: u16) {
+    debug_assert!(value & 0x00FF == value);
+    registers.bx = (registers.bx & 0xFF00) + value;
+}
+
+fn set_bh(registers: &mut Registers, value: u16) {
+    debug_assert!(value & 0x00FF == value);
+    registers.bx = (registers.bx & 0x00FF) + (value << 8);
+}
+
+fn set_cl(registers: &mut Registers, value: u16) {
+    debug_assert!(value & 0x00FF == value);
+    registers.cx = (registers.cx & 0xFF00) + value;
+}
+
+fn set_ch(registers: &mut Registers, value: u16) {
+    debug_assert!(value & 0x00FF == value);
+    registers.cx = (registers.cx & 0x00FF) + (value << 8);
+}
+
+fn set_dl(registers: &mut Registers, value: u16) {
+    debug_assert!(value & 0x00FF == value);
+    registers.dx = (registers.dx & 0xFF00) + value;
+}
+
+fn set_dh(registers: &mut Registers, value: u16) {
+    debug_assert!(value & 0x00FF == value);
+    registers.dx = (registers.dx & 0x00FF) + (value << 8);
+}
+
+fn set_ax(registers: &mut Registers, value: u16) {
+    registers.ax = value;
+}
+
+fn set_bx(registers: &mut Registers, value: u16) {
+    registers.bx = value;
+}
+
+fn set_cx(registers: &mut Registers, value: u16) {
+    registers.cx = value;
+}
+
+fn set_dx(registers: &mut Registers, value: u16) {
+    registers.dx = value;
+}
+
+fn set_sp(registers: &mut Registers, value: u16) {
+    registers.sp = value;
+}
+
+fn set_bp(registers: &mut Registers, value: u16) {
+    registers.bp = value;
+}
+
+fn set_si(registers: &mut Registers, value: u16) {
+    registers.si = value;
+}
+
+fn set_di(registers: &mut Registers, value: u16) {
+    registers.di = value;
+}
+
 const DATA_SIZE_ENCODINGS: &'static [&str] = &["byte", "word"];
+
+type GrabDataFn = fn(&mut ByteStream) -> u16;
+const GRAB_DATA_FNS: &'static [GrabDataFn] = &[grab_byte_as_word, grab_word];
 
 const REG_FIELD_ENCODINGS: &'static [&str] = &[
     "al", "cl", "dl", "bl", "ah", "ch", "dh", "bh", // w = 0
     "ax", "cx", "dx", "bx", "sp", "bp", "si", "di"  // w = 1
+];
+
+type SetRegisterFn = fn(&mut Registers, u16);
+const SET_REGISTER_FNS: &'static [SetRegisterFn] = &[
+    set_al, set_cl, set_dl, set_bl, set_ah, set_ch, set_dh, set_bh,
+    set_ax, set_cx, set_dx, set_bx, set_sp, set_bp, set_si, set_di
 ];
 
 const REG_EXPRESSION_ENCODINGS: &'static [&str] = &[
@@ -274,19 +372,19 @@ fn decode_mov_imm_to_reg_mem_encoding(byte_stream: &mut ByteStream) {
     }    
 }
 
-fn decode_mov_imm_to_reg_encoding(byte_stream: &mut ByteStream) {
+fn decode_mov_imm_to_reg_encoding(byte_stream: &mut ByteStream, registers: &mut Registers) {
     let byte: u8 = grab_byte(byte_stream);
     let w_bit: u8 = (byte & 0x08) >> 3;
     let reg_field: u8 = byte & 0x07;
 
-    let immediate: u16 = if w_bit == 1 {
-        grab_word(byte_stream)
-    } else {
-        grab_byte(byte_stream) as u16
-    };
-
     let field_index: usize = (reg_field + 8 * w_bit) as usize;
     debug_assert!(field_index < REG_FIELD_ENCODINGS.len());
+
+    let grab_data: GrabDataFn = GRAB_DATA_FNS[w_bit as usize];
+    let immediate: u16 = grab_data(byte_stream);
+
+    let set_register: SetRegisterFn = SET_REGISTER_FNS[field_index];
+    set_register(registers, immediate);
 
     let field: &str = REG_FIELD_ENCODINGS[field_index];
 
@@ -652,6 +750,10 @@ fn main() {
 
     let mut byte_stream = ByteStream{bytes: bytes, index: 0};
 
+    let mut registers = Registers{
+        ax: 0, bx: 0, cx: 0, dx: 0, sp: 0, bp: 0, si: 0, di: 0
+    };
+
     println!("bits 16");
 
     let byte_count: usize = byte_stream.bytes.len();
@@ -662,7 +764,7 @@ fn main() {
         } else if byte & 0xFE == MOV_IMM_TO_REG_MEM_BITS {
             decode_mov_imm_to_reg_mem_encoding(&mut byte_stream);
         } else if byte & 0xF0 == MOV_IMM_TO_REG_BITS {
-            decode_mov_imm_to_reg_encoding(&mut byte_stream);
+            decode_mov_imm_to_reg_encoding(&mut byte_stream, &mut registers);
         } else if byte & 0xFE == MOV_MEM_TO_ACC_BITS {
             decode_mov_mem_to_acc_encoding(&mut byte_stream);
         } else if byte & 0xFE == MOV_ACC_TO_MEM_BITS {
@@ -681,4 +783,6 @@ fn main() {
             debug_assert!(false);   // Not handling any other instructions atm
         }
     }
+
+    dbg!(registers);
 }
