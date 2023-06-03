@@ -6,3 +6,5 @@ test_asm/listing_0040_challenge_movs
 test_asm/listing_0041_add_sub_cmp_jnz
 test_asm/listing_0043_immediate_movs
 test_asm/listing_0044_register_movs
+test_asm/listing_0046_add_sub_cmp
+test_asm/listing_0047_challenge_flags

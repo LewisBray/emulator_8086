@@ -24,11 +24,6 @@ fn grab_byte(byte_stream: &mut ByteStream) -> u8 {
     return byte;
 }
 
-fn grab_byte_as_word(byte_stream: &mut ByteStream) -> u16 {
-    let byte: u8  = grab_byte(byte_stream);
-    return byte as u16;
-}
-
 fn grab_word(byte_stream: &mut ByteStream) -> u16 {
     debug_assert!(!byte_stream.bytes.is_empty());
     debug_assert!(byte_stream.index < byte_stream.bytes.len() - 1);
@@ -53,7 +48,8 @@ struct Registers {
     sp: u16,
     bp: u16,
     si: u16,
-    di: u16
+    di: u16,
+    flags: u16
 }
 
 fn set_al(registers: &mut Registers, value: u16) {
@@ -193,9 +189,6 @@ fn get_di(registers: &Registers) -> u16 {
 }
 
 const DATA_SIZE_ENCODINGS: &'static [&str] = &["byte", "word"];
-
-type GrabDataFn = fn(&mut ByteStream) -> u16;
-const GRAB_DATA_FNS: &'static [GrabDataFn] = &[grab_byte_as_word, grab_word];
 
 const REG_FIELD_ENCODINGS: &'static [&str] = &[
     "al", "cl", "dl", "bl", "ah", "ch", "dh", "bh", // w = 0
@@ -456,8 +449,11 @@ fn decode_mov_imm_to_reg_encoding(byte_stream: &mut ByteStream, registers: &mut 
     let field_index: usize = (reg_field + 8 * w_bit) as usize;
     debug_assert!(field_index < REG_FIELD_ENCODINGS.len());
 
-    let grab_data: GrabDataFn = GRAB_DATA_FNS[w_bit as usize];
-    let immediate: u16 = grab_data(byte_stream);
+    let immediate: u16 = if w_bit == 1 {
+        grab_word(byte_stream)
+    } else {
+        grab_byte(byte_stream) as u16
+    };
 
     let set_register: SetRegisterFn = SET_REGISTER_FNS[field_index];
     set_register(registers, immediate);
@@ -501,7 +497,159 @@ const ARITHMETIC_INSTRUCTION_ENCODINGS: &'static [&str] = &[
     "add", "or", "adc", "sbb", "and", "sub", "xor", "cmp"
 ];
 
-fn decode_arithmetic_mem_reg_with_reg_to_either_encoding(byte_stream: &mut ByteStream) {
+const ZF_FLAG_BIT: u16 = 0x0040;
+const SF_FLAG_BIT: u16 = 0x0080;
+
+fn set_bit(mut x: u16, bit_flag: u16, value: bool) -> u16 {
+    if value {
+        x |= bit_flag;
+    } else {
+        x &= !bit_flag;
+    }
+
+    return x;
+}
+
+fn update_flags_register(mut flags_register: u16, result: u16) -> u16 {
+    let is_zero: bool = result == 0;
+    flags_register = set_bit(flags_register, ZF_FLAG_BIT, is_zero);
+
+    let is_signed: bool = result & 0x8000 != 0;
+    flags_register = set_bit(flags_register, SF_FLAG_BIT, is_signed);
+
+    return flags_register;
+}
+
+fn unimplemented_arithmetic_immediate_instruction(_registers: &mut Registers, _immediate: u16, _destination_index: usize) {
+    debug_assert!(false);
+}
+
+fn add_immediate(registers: &mut Registers, immediate: u16, destination_index: usize) {
+    let get_destination_register: GetRegisterFn = GET_REGISTER_FNS[destination_index];
+    let field_value: u16 = get_destination_register(registers);
+
+    let add_result: u16 = field_value.wrapping_add(immediate);
+
+    registers.flags = update_flags_register(registers.flags, add_result);
+
+    let set_destination_register: SetRegisterFn = SET_REGISTER_FNS[destination_index];
+    set_destination_register(registers, add_result);
+}
+
+fn or_immediate(registers: &mut Registers, immediate: u16, destination_index: usize) {
+    let get_field_register: GetRegisterFn = GET_REGISTER_FNS[destination_index];
+    let destination_value: u16 = get_field_register(registers);
+
+    let or_result: u16 = destination_value | immediate;
+
+    registers.flags = update_flags_register(registers.flags, or_result);
+
+    let set_destination_register: SetRegisterFn = SET_REGISTER_FNS[destination_index];
+    set_destination_register(registers, or_result);
+}
+
+fn and_immediate(registers: &mut Registers, immediate: u16, destination_index: usize) {
+    let get_destination_register: GetRegisterFn = GET_REGISTER_FNS[destination_index];
+    let destination_value: u16 = get_destination_register(registers);
+
+    let and_result: u16 = destination_value & immediate;
+
+    registers.flags = update_flags_register(registers.flags, and_result);
+
+    let set_destination_register: SetRegisterFn = SET_REGISTER_FNS[destination_index];
+    set_destination_register(registers, and_result);
+}
+
+fn sub_immediate(registers: &mut Registers, immediate: u16, destination_index: usize) {
+    let get_destination_register: GetRegisterFn = GET_REGISTER_FNS[destination_index];
+    let destination_value: u16 = get_destination_register(registers);
+
+    let sub_result: u16 = destination_value.wrapping_sub(immediate);
+
+    registers.flags = update_flags_register(registers.flags, sub_result);
+
+    let set_destination_register: SetRegisterFn = SET_REGISTER_FNS[destination_index];
+    set_destination_register(registers, sub_result);
+}
+
+fn xor_immediate(registers: &mut Registers, immediate: u16, destination_index: usize) {
+    let get_destination_register: GetRegisterFn = GET_REGISTER_FNS[destination_index];
+    let destination_value: u16 = get_destination_register(registers);
+
+    let xor_result: u16 = destination_value ^ immediate;
+
+    registers.flags = update_flags_register(registers.flags, xor_result);
+
+    let set_destination_register: SetRegisterFn = SET_REGISTER_FNS[destination_index];
+    set_destination_register(registers, xor_result);
+}
+
+fn cmp_immediate(registers: &mut Registers, immediate: u16, destination_index: usize) {
+    let get_destination_register: GetRegisterFn = GET_REGISTER_FNS[destination_index];
+    let destination_value: u16 = get_destination_register(registers);
+
+    let sub_result: u16 = destination_value.wrapping_sub(immediate);
+
+    registers.flags = update_flags_register(registers.flags, sub_result);
+}
+
+type ArithmeticImmediateInstructionFn = fn(&mut Registers, u16, usize);
+const ARITHMETIC_IMMEDIATE_INSTRUCTION_FNS: &'static [ArithmeticImmediateInstructionFn] = &[
+    add_immediate, or_immediate, unimplemented_arithmetic_immediate_instruction, unimplemented_arithmetic_immediate_instruction, and_immediate, sub_immediate, xor_immediate, cmp_immediate
+];
+
+fn unimplemented_arithmetic_instruction(_registers: &mut Registers, _source_index: usize, _destination_index: usize) {
+    debug_assert!(false);
+}
+
+fn add(registers: &mut Registers, source_index: usize, destination_index: usize) {
+    let get_source_register: GetRegisterFn = GET_REGISTER_FNS[source_index];
+    let source_value: u16 = get_source_register(registers);
+
+    add_immediate(registers, source_value, destination_index);
+}
+
+fn or(registers: &mut Registers, source_index: usize, destination_index: usize) {
+    let get_source_register: GetRegisterFn = GET_REGISTER_FNS[source_index];
+    let source_value: u16 = get_source_register(registers);
+
+    or_immediate(registers, source_value, destination_index);
+}
+
+fn and(registers: &mut Registers, source_index: usize, destination_index: usize) {
+    let get_source_register: GetRegisterFn = GET_REGISTER_FNS[source_index];
+    let source_value: u16 = get_source_register(registers);
+
+    and_immediate(registers, source_value, destination_index);
+}
+
+fn sub(registers: &mut Registers, source_index: usize, destination_index: usize) {
+    let get_source_register: GetRegisterFn = GET_REGISTER_FNS[source_index];
+    let source_value: u16 = get_source_register(registers);
+
+    sub_immediate(registers, source_value, destination_index);
+}
+
+fn xor(registers: &mut Registers, source_index: usize, destination_index: usize) {
+    let get_source_register: GetRegisterFn = GET_REGISTER_FNS[source_index];
+    let source_value: u16 = get_source_register(registers);
+
+    xor_immediate(registers, source_value, destination_index);
+}
+
+fn cmp(registers: &mut Registers, source_index: usize, destination_index: usize) {
+    let get_source_register: GetRegisterFn = GET_REGISTER_FNS[source_index];
+    let source_value: u16 = get_source_register(registers);
+
+    cmp_immediate(registers, source_value, destination_index);
+}
+
+type ArithmeticInstructionFn = fn(&mut Registers, usize, usize);
+const ARITHMETIC_INSTRUCTION_FNS: &'static [ArithmeticInstructionFn] = &[
+    add, or, unimplemented_arithmetic_instruction, unimplemented_arithmetic_instruction, and, sub, xor, cmp
+];
+
+fn decode_arithmetic_mem_reg_with_reg_to_either_encoding(byte_stream: &mut ByteStream, registers: &mut Registers) {
     let byte: u8 = grab_byte(byte_stream);
 
     let instruction_index: usize = ((byte & 0x38) >> 3) as usize;
@@ -607,6 +755,9 @@ fn decode_arithmetic_mem_reg_with_reg_to_either_encoding(byte_stream: &mut ByteS
             let destination_index: usize = (d_bit * reg_field + (1 - d_bit) * rm_field + 8 * w_bit) as usize;
             debug_assert!(destination_index < REG_FIELD_ENCODINGS.len());
 
+            let arithmetic_instruction: ArithmeticInstructionFn = ARITHMETIC_INSTRUCTION_FNS[instruction_index];
+            arithmetic_instruction(registers, source_index, destination_index);
+
             let source: &str = REG_FIELD_ENCODINGS[source_index];
             let destination: &str = REG_FIELD_ENCODINGS[destination_index];
 
@@ -618,7 +769,7 @@ fn decode_arithmetic_mem_reg_with_reg_to_either_encoding(byte_stream: &mut ByteS
     }
 }
 
-fn decode_arithmetic_signed_imm_to_reg_encoding(byte_stream: &mut ByteStream) {
+fn decode_arithmetic_signed_imm_to_reg_encoding(byte_stream: &mut ByteStream, registers: &mut Registers) {
     let byte: u8 = grab_byte(byte_stream);
 
     let s_bit: u8 = (byte & 0x02) >> 1;
@@ -740,14 +891,16 @@ fn decode_arithmetic_signed_imm_to_reg_encoding(byte_stream: &mut ByteStream) {
             let field_index: usize = (rm_field + 8 * w_bit) as usize;
             debug_assert!(field_index < REG_FIELD_ENCODINGS.len());
 
-            let field: &str = REG_FIELD_ENCODINGS[field_index];
-
             let data: u16 = if s_bit == 0 && w_bit == 1 {
                 grab_word(byte_stream)
             } else {
-                grab_byte(byte_stream) as u16
+                grab_byte(byte_stream) as i8 as u16
             };
 
+            let arithmetic_immediate_instruction: ArithmeticImmediateInstructionFn = ARITHMETIC_IMMEDIATE_INSTRUCTION_FNS[instruction_index];
+            arithmetic_immediate_instruction(registers, data, field_index);
+
+            let field: &str = REG_FIELD_ENCODINGS[field_index];
             if s_bit == 1 {
                 println!("{} {}, {}", instruction, field, data as i8);
             } else {
@@ -827,7 +980,7 @@ fn main() {
     let mut byte_stream = ByteStream{bytes: bytes, index: 0};
 
     let mut registers = Registers{
-        ax: 0, bx: 0, cx: 0, dx: 0, sp: 0, bp: 0, si: 0, di: 0
+        ax: 0, bx: 0, cx: 0, dx: 0, sp: 0, bp: 0, si: 0, di: 0, flags: 0
     };
 
     println!("bits 16");
@@ -846,9 +999,9 @@ fn main() {
         } else if byte & 0xFE == MOV_ACC_TO_MEM_BITS {
             decode_mov_acc_to_mem_encoding(&mut byte_stream);
         } else if byte & 0xC4 == ARITHMETIC_REG_MEM_WITH_REG_TO_EITHER_BITS {
-            decode_arithmetic_mem_reg_with_reg_to_either_encoding(&mut byte_stream);
+            decode_arithmetic_mem_reg_with_reg_to_either_encoding(&mut byte_stream, &mut registers);
         } else if byte & 0xFC == ARITHMETIC_IMM_TO_REG_MEM_BITS {
-            decode_arithmetic_signed_imm_to_reg_encoding(&mut byte_stream);
+            decode_arithmetic_signed_imm_to_reg_encoding(&mut byte_stream, &mut registers);
         } else if byte & 0xC4 == ARITHMETIC_IMM_TO_ACC_BITS {
             decode_arithmetic_imm_to_acc_encoding(&mut byte_stream);
         } else if byte & 0xF0 == CONDITIONAL_JUMP_INSTRUCTION_BITS {
