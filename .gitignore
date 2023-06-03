@@ -8,3 +8,5 @@ test_asm/listing_0043_immediate_movs
 test_asm/listing_0044_register_movs
 test_asm/listing_0046_add_sub_cmp
 test_asm/listing_0047_challenge_flags
+test_asm/listing_0048_ip_register
+test_asm/listing_0049_conditional_jumps

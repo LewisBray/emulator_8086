@@ -1,44 +1,6 @@
 use std::env;
 use std::fs;
 
-struct ByteStream {
-    bytes: Vec<u8>,
-    index: usize
-}
-
-fn peek_byte(byte_stream: &ByteStream) -> u8 {
-    debug_assert!(!byte_stream.bytes.is_empty());
-    debug_assert!(byte_stream.index < byte_stream.bytes.len());
-
-    let byte: u8 = byte_stream.bytes[byte_stream.index];
-    return byte;
-}
-
-fn grab_byte(byte_stream: &mut ByteStream) -> u8 {
-    debug_assert!(!byte_stream.bytes.is_empty());
-    debug_assert!(byte_stream.index < byte_stream.bytes.len());
-
-    let byte: u8 = byte_stream.bytes[byte_stream.index];
-    byte_stream.index += 1;
-    
-    return byte;
-}
-
-fn grab_word(byte_stream: &mut ByteStream) -> u16 {
-    debug_assert!(!byte_stream.bytes.is_empty());
-    debug_assert!(byte_stream.index < byte_stream.bytes.len() - 1);
-
-    let word_low: u8 = byte_stream.bytes[byte_stream.index];
-    byte_stream.index += 1;
-
-    let word_high: u8 = byte_stream.bytes[byte_stream.index];
-    byte_stream.index += 1;
-
-    let word: u16 = ((word_high as u16) << 8) + (word_low as u16);
-
-    return word;
-}
-
 #[derive(Debug)]
 struct Registers {
     ax: u16,
@@ -49,6 +11,7 @@ struct Registers {
     bp: u16,
     si: u16,
     di: u16,
+    ip: u16,
     flags: u16
 }
 
@@ -188,6 +151,31 @@ fn get_di(registers: &Registers) -> u16 {
     return registers.di;
 }
 
+fn grab_word(machine_code: &[u8], ip: &mut u16) -> u16 {
+    debug_assert!(!machine_code.is_empty());
+    debug_assert!((*ip as usize) < machine_code.len() - 1);
+
+    let word_low: u8 = machine_code[*ip as usize];
+    *ip += 1;
+
+    let word_high: u8 = machine_code[*ip as usize];
+    *ip += 1;
+
+    let word: u16 = ((word_high as u16) << 8) + (word_low as u16);
+
+    return word;
+}
+
+fn grab_byte(machine_code: &[u8], ip: &mut u16) -> u8 {
+    debug_assert!(!machine_code.is_empty());
+    debug_assert!((*ip as usize) < machine_code.len());
+
+    let byte: u8 = machine_code[*ip as usize];
+    *ip += 1;
+    
+    return byte;
+}
+
 const DATA_SIZE_ENCODINGS: &'static [&str] = &["byte", "word"];
 
 const REG_FIELD_ENCODINGS: &'static [&str] = &[
@@ -224,12 +212,12 @@ const MOV_IMM_TO_REG_BITS: u8 = 0xB0;
 const MOV_MEM_TO_ACC_BITS: u8 = 0xA0;
 const MOV_ACC_TO_MEM_BITS: u8 = 0xA2;
 
-fn decode_mov_mem_reg_to_from_reg_encoding(byte_stream: &mut ByteStream, registers: &mut Registers) {
-    let byte: u8 = grab_byte(byte_stream);
+fn decode_mov_mem_reg_to_from_reg_encoding(machine_code: &[u8], registers: &mut Registers) {
+    let byte: u8 = grab_byte(machine_code, &mut registers.ip);
     let d_bit: u8 = (byte & 0x2) >> 1;  // 1 <=> reg field gives destination
     let w_bit: u8 = byte & 0x1;         // 1 <=> wide version of instruction
     
-    let byte: u8 = grab_byte(byte_stream);
+    let byte: u8 = grab_byte(machine_code, &mut registers.ip);
 
     let mod_field: u8 = (byte & 0xC0) >> 6;
     let reg_field: u8 = (byte & 0x38) >> 3;
@@ -246,9 +234,9 @@ fn decode_mov_mem_reg_to_from_reg_encoding(byte_stream: &mut ByteStream, registe
 
             if expression_index == 6 {
                 let address: u16 = if w_bit == 1 {
-                    grab_word(byte_stream)
+                    grab_word(machine_code, &mut registers.ip)
                 } else {
-                    grab_byte(byte_stream) as u16
+                    grab_byte(machine_code, &mut registers.ip) as u16
                 };
 
                 if d_bit == 1 {
@@ -275,7 +263,7 @@ fn decode_mov_mem_reg_to_from_reg_encoding(byte_stream: &mut ByteStream, registe
             let expression: &str = REG_EXPRESSION_ENCODINGS[expression_index];
             let field: &str = REG_FIELD_ENCODINGS[field_index];
 
-            let displacement: i8 = grab_byte(byte_stream) as i8;
+            let displacement: i8 = grab_byte(machine_code, &mut registers.ip) as i8;
             let sign: char = if displacement > 0 { '+' } else { '-' };
 
             if d_bit == 1 {
@@ -301,7 +289,7 @@ fn decode_mov_mem_reg_to_from_reg_encoding(byte_stream: &mut ByteStream, registe
             let expression: &str = REG_EXPRESSION_ENCODINGS[expression_index];
             let field: &str = REG_FIELD_ENCODINGS[field_index];
 
-            let displacement: i16 = grab_word(byte_stream) as i16;
+            let displacement: i16 = grab_word(machine_code, &mut registers.ip) as i16;
             let sign: char = if displacement > 0 { '+' } else { '-' };
 
             if d_bit == 1 {
@@ -341,11 +329,11 @@ fn decode_mov_mem_reg_to_from_reg_encoding(byte_stream: &mut ByteStream, registe
     }
 }
 
-fn decode_mov_imm_to_reg_mem_encoding(byte_stream: &mut ByteStream) {
-    let byte: u8 = grab_byte(byte_stream);
+fn decode_mov_imm_to_reg_mem_encoding(machine_code: &[u8], registers: &mut Registers) {
+    let byte: u8 = grab_byte(machine_code, &mut registers.ip);
     let w_bit: u8 = byte & 0x01;
 
-    let byte: u8 = grab_byte(byte_stream);
+    let byte: u8 = grab_byte(machine_code, &mut registers.ip);
     debug_assert!(byte & 0x38 == 0);
     let mod_field: u8 = (byte & 0xC0) >> 6;
     let rm_field: u8 = byte & 0x07;
@@ -359,15 +347,15 @@ fn decode_mov_imm_to_reg_mem_encoding(byte_stream: &mut ByteStream) {
 
             if expression_index == 6 {
                 let address: u16 = if w_bit == 1 {
-                    grab_word(byte_stream)
+                    grab_word(machine_code, &mut registers.ip)
                 } else {
-                    grab_byte(byte_stream) as u16
+                    grab_byte(machine_code, &mut registers.ip) as u16
                 };
 
                 let data: u16 = if w_bit == 1 {
-                    grab_word(byte_stream)
+                    grab_word(machine_code, &mut registers.ip)
                 } else {
-                    grab_byte(byte_stream) as u16
+                    grab_byte(machine_code, &mut registers.ip) as u16
                 };
 
                 println!("mov [{}], {} {}", address, size, data);
@@ -375,9 +363,9 @@ fn decode_mov_imm_to_reg_mem_encoding(byte_stream: &mut ByteStream) {
                 let expression: &str = REG_EXPRESSION_ENCODINGS[expression_index];
 
                 let data: u16 = if w_bit == 1 {
-                    grab_word(byte_stream)
+                    grab_word(machine_code, &mut registers.ip)
                 } else {
-                    grab_byte(byte_stream) as u16
+                    grab_byte(machine_code, &mut registers.ip) as u16
                 };
 
                 println!("mov [{}], {} {}", expression, size, data);
@@ -391,13 +379,13 @@ fn decode_mov_imm_to_reg_mem_encoding(byte_stream: &mut ByteStream) {
 
             let size: &str = DATA_SIZE_ENCODINGS[w_bit as usize];
 
-            let displacement: i8 = grab_byte(byte_stream) as i8;
+            let displacement: i8 = grab_byte(machine_code, &mut registers.ip) as i8;
             let sign: char = if displacement > 0 { '+' } else { '-' };
 
             let data: u16 = if w_bit == 1 {
-                grab_word(byte_stream)
+                grab_word(machine_code, &mut registers.ip)
             } else {
-                grab_byte(byte_stream) as u16
+                grab_byte(machine_code, &mut registers.ip) as u16
             };
 
             println!("mov [{} {} {}], {} {}", expression, sign, displacement.abs(), size, data);
@@ -410,13 +398,13 @@ fn decode_mov_imm_to_reg_mem_encoding(byte_stream: &mut ByteStream) {
 
             let size: &str = DATA_SIZE_ENCODINGS[w_bit as usize];
 
-            let displacement: i16 = grab_word(byte_stream) as i16;
+            let displacement: i16 = grab_word(machine_code, &mut registers.ip) as i16;
             let sign: char = if displacement > 0 { '+' } else { '-' };
 
             let data: u16 = if w_bit == 1 {
-                grab_word(byte_stream)
+                grab_word(machine_code, &mut registers.ip)
             } else {
-                grab_byte(byte_stream) as u16
+                grab_byte(machine_code, &mut registers.ip) as u16
             };
 
             println!("mov [{} {} {}], {} {}", expression, sign, displacement.abs(), size, data);
@@ -428,9 +416,9 @@ fn decode_mov_imm_to_reg_mem_encoding(byte_stream: &mut ByteStream) {
             let destination: &str = REG_FIELD_ENCODINGS[field_index];
 
             let data: u16 = if w_bit == 1 {
-                grab_word(byte_stream)
+                grab_word(machine_code, &mut registers.ip)
             } else {
-                grab_byte(byte_stream) as u16
+                grab_byte(machine_code, &mut registers.ip) as u16
             };
 
             println!("mov {}, {}", destination, data);
@@ -441,8 +429,8 @@ fn decode_mov_imm_to_reg_mem_encoding(byte_stream: &mut ByteStream) {
     }    
 }
 
-fn decode_mov_imm_to_reg_encoding(byte_stream: &mut ByteStream, registers: &mut Registers) {
-    let byte: u8 = grab_byte(byte_stream);
+fn decode_mov_imm_to_reg_encoding(machine_code: &[u8], registers: &mut Registers) {
+    let byte: u8 = grab_byte(machine_code, &mut registers.ip);
     let w_bit: u8 = (byte & 0x08) >> 3;
     let reg_field: u8 = byte & 0x07;
 
@@ -450,9 +438,9 @@ fn decode_mov_imm_to_reg_encoding(byte_stream: &mut ByteStream, registers: &mut 
     debug_assert!(field_index < REG_FIELD_ENCODINGS.len());
 
     let immediate: u16 = if w_bit == 1 {
-        grab_word(byte_stream)
+        grab_word(machine_code, &mut registers.ip)
     } else {
-        grab_byte(byte_stream) as u16
+        grab_byte(machine_code, &mut registers.ip) as u16
     };
 
     let set_register: SetRegisterFn = SET_REGISTER_FNS[field_index];
@@ -463,27 +451,27 @@ fn decode_mov_imm_to_reg_encoding(byte_stream: &mut ByteStream, registers: &mut 
     println!("mov {}, {}", field, immediate);
 }
 
-fn decode_mov_mem_to_acc_encoding(byte_stream: &mut ByteStream) {
-    let byte: u8 = grab_byte(byte_stream);
+fn decode_mov_mem_to_acc_encoding(machine_code: &[u8], registers: &mut Registers) {
+    let byte: u8 = grab_byte(machine_code, &mut registers.ip);
     let w_bit: u8 = byte & 0x01;
 
     let address: u16 = if w_bit == 1 {
-        grab_word(byte_stream)
+        grab_word(machine_code, &mut registers.ip)
     } else {
-        grab_byte(byte_stream) as u16
+        grab_byte(machine_code, &mut registers.ip) as u16
     };
 
     println!("mov ax, [{}]", address);
 }
 
-fn decode_mov_acc_to_mem_encoding(byte_stream: &mut ByteStream) {
-    let byte: u8 = grab_byte(byte_stream);
+fn decode_mov_acc_to_mem_encoding(machine_code: &[u8], registers: &mut Registers) {
+    let byte: u8 = grab_byte(machine_code, &mut registers.ip);
     let w_bit: u8 = byte & 0x01;
 
     let address: u16 = if w_bit == 1 {
-        grab_word(byte_stream)
+        grab_word(machine_code, &mut registers.ip)
     } else {
-        grab_byte(byte_stream) as u16
+        grab_byte(machine_code, &mut registers.ip) as u16
     };
 
     println!("mov [{}], ax", address);
@@ -649,8 +637,8 @@ const ARITHMETIC_INSTRUCTION_FNS: &'static [ArithmeticInstructionFn] = &[
     add, or, unimplemented_arithmetic_instruction, unimplemented_arithmetic_instruction, and, sub, xor, cmp
 ];
 
-fn decode_arithmetic_mem_reg_with_reg_to_either_encoding(byte_stream: &mut ByteStream, registers: &mut Registers) {
-    let byte: u8 = grab_byte(byte_stream);
+fn decode_arithmetic_mem_reg_with_reg_to_either_encoding(machine_code: &[u8], registers: &mut Registers) {
+    let byte: u8 = grab_byte(machine_code, &mut registers.ip);
 
     let instruction_index: usize = ((byte & 0x38) >> 3) as usize;
     debug_assert!(instruction_index < ARITHMETIC_INSTRUCTION_ENCODINGS.len());
@@ -660,7 +648,7 @@ fn decode_arithmetic_mem_reg_with_reg_to_either_encoding(byte_stream: &mut ByteS
     let d_bit: u8 = (byte & 0x02) >> 1;
     let w_bit: u8 = byte & 0x01;
 
-    let byte: u8 = grab_byte(byte_stream);
+    let byte: u8 = grab_byte(machine_code, &mut registers.ip);
 
     let mod_field: u8 = (byte & 0xC0) >> 6;
     let reg_field: u8 = (byte & 0x38) >> 3;
@@ -677,9 +665,9 @@ fn decode_arithmetic_mem_reg_with_reg_to_either_encoding(byte_stream: &mut ByteS
 
             if expression_index == 6 {
                 let address: u16 = if w_bit == 1 {
-                    grab_word(byte_stream)
+                    grab_word(machine_code, &mut registers.ip)
                 } else {
-                    grab_byte(byte_stream) as u16
+                    grab_byte(machine_code, &mut registers.ip) as u16
                 };
 
                 if d_bit == 1 {
@@ -706,7 +694,7 @@ fn decode_arithmetic_mem_reg_with_reg_to_either_encoding(byte_stream: &mut ByteS
             let expression: &str = REG_EXPRESSION_ENCODINGS[expression_index];
             let field: &str = REG_FIELD_ENCODINGS[field_index];
 
-            let displacement: i8 = grab_byte(byte_stream) as i8;
+            let displacement: i8 = grab_byte(machine_code, &mut registers.ip) as i8;
             let sign: char = if displacement > 0 { '+' } else { '-' };
 
             if d_bit == 1 {
@@ -732,7 +720,7 @@ fn decode_arithmetic_mem_reg_with_reg_to_either_encoding(byte_stream: &mut ByteS
             let expression: &str = REG_EXPRESSION_ENCODINGS[expression_index];
             let field: &str = REG_FIELD_ENCODINGS[field_index];
 
-            let displacement: i16 = grab_word(byte_stream) as i16;
+            let displacement: i16 = grab_word(machine_code, &mut registers.ip) as i16;
             let sign: char = if displacement > 0 { '+' } else { '-' };
 
             if d_bit == 1 {
@@ -769,13 +757,13 @@ fn decode_arithmetic_mem_reg_with_reg_to_either_encoding(byte_stream: &mut ByteS
     }
 }
 
-fn decode_arithmetic_signed_imm_to_reg_encoding(byte_stream: &mut ByteStream, registers: &mut Registers) {
-    let byte: u8 = grab_byte(byte_stream);
+fn decode_arithmetic_signed_imm_to_reg_encoding(machine_code: &[u8], registers: &mut Registers) {
+    let byte: u8 = grab_byte(machine_code, &mut registers.ip);
 
     let s_bit: u8 = (byte & 0x02) >> 1;
     let w_bit: u8 = byte & 0x01;
 
-    let byte: u8 = grab_byte(byte_stream);
+    let byte: u8 = grab_byte(machine_code, &mut registers.ip);
 
     let mod_field: u8 = (byte & 0xC0) >> 6;
     let instruction_index: usize = ((byte & 0x38) >> 3) as usize;
@@ -793,15 +781,15 @@ fn decode_arithmetic_signed_imm_to_reg_encoding(byte_stream: &mut ByteStream, re
 
             if expression_index == 6 {
                 let address: u16 = if w_bit == 1 {
-                    grab_word(byte_stream)
+                    grab_word(machine_code, &mut registers.ip)
                 } else {
-                    grab_byte(byte_stream) as u16
+                    grab_byte(machine_code, &mut registers.ip) as u16
                 };
 
                 let data: u16 = if s_bit == 0 && w_bit == 1 {
-                    grab_word(byte_stream)
+                    grab_word(machine_code, &mut registers.ip)
                 } else {
-                    grab_byte(byte_stream) as u16
+                    grab_byte(machine_code, &mut registers.ip) as u16
                 };
 
                 if s_bit == 1 {
@@ -813,9 +801,9 @@ fn decode_arithmetic_signed_imm_to_reg_encoding(byte_stream: &mut ByteStream, re
                 let expression: &str = REG_EXPRESSION_ENCODINGS[expression_index];
 
                 let data: u16 = if s_bit == 0 && w_bit == 1 {
-                    grab_word(byte_stream)
+                    grab_word(machine_code, &mut registers.ip)
                 } else {
-                    grab_byte(byte_stream) as u16
+                    grab_byte(machine_code, &mut registers.ip) as u16
                 };
 
                 if s_bit == 1 {
@@ -831,13 +819,13 @@ fn decode_arithmetic_signed_imm_to_reg_encoding(byte_stream: &mut ByteStream, re
 
             let expression: &str = REG_EXPRESSION_ENCODINGS[expression_index];
 
-            let displacement: i8 = grab_byte(byte_stream) as i8;
+            let displacement: i8 = grab_byte(machine_code, &mut registers.ip) as i8;
             let sign: char = if displacement > 0 { '+' } else { '-' };
 
             let data: u16 = if s_bit == 0 && w_bit == 1 {
-                grab_word(byte_stream)
+                grab_word(machine_code, &mut registers.ip)
             } else {
-                grab_byte(byte_stream) as u16
+                grab_byte(machine_code, &mut registers.ip) as u16
             };
 
             let size: &str = DATA_SIZE_ENCODINGS[w_bit as usize];
@@ -862,13 +850,13 @@ fn decode_arithmetic_signed_imm_to_reg_encoding(byte_stream: &mut ByteStream, re
 
             let expression: &str = REG_EXPRESSION_ENCODINGS[expression_index];
 
-            let displacement: i16 = grab_word(byte_stream) as i16;
+            let displacement: i16 = grab_word(machine_code, &mut registers.ip) as i16;
             let sign: char = if displacement > 0 { '+' } else { '-' };
 
             let data: u16 = if s_bit == 0 && w_bit == 1 {
-                grab_word(byte_stream)
+                grab_word(machine_code, &mut registers.ip)
             } else {
-                grab_byte(byte_stream) as u16
+                grab_byte(machine_code, &mut registers.ip) as u16
             };
 
             let size: &str = DATA_SIZE_ENCODINGS[w_bit as usize];
@@ -892,9 +880,9 @@ fn decode_arithmetic_signed_imm_to_reg_encoding(byte_stream: &mut ByteStream, re
             debug_assert!(field_index < REG_FIELD_ENCODINGS.len());
 
             let data: u16 = if s_bit == 0 && w_bit == 1 {
-                grab_word(byte_stream)
+                grab_word(machine_code, &mut registers.ip)
             } else {
-                grab_byte(byte_stream) as i8 as u16
+                grab_byte(machine_code, &mut registers.ip) as i8 as u16
             };
 
             let arithmetic_immediate_instruction: ArithmeticImmediateInstructionFn = ARITHMETIC_IMMEDIATE_INSTRUCTION_FNS[instruction_index];
@@ -913,8 +901,8 @@ fn decode_arithmetic_signed_imm_to_reg_encoding(byte_stream: &mut ByteStream, re
     }
 }
 
-fn decode_arithmetic_imm_to_acc_encoding(byte_stream: &mut ByteStream) {
-    let byte: u8 = grab_byte(byte_stream);
+fn decode_arithmetic_imm_to_acc_encoding(machine_code: &[u8], registers: &mut Registers) {
+    let byte: u8 = grab_byte(machine_code, &mut registers.ip);
 
     let w_bit: u8 = byte & 0x01;
 
@@ -924,9 +912,9 @@ fn decode_arithmetic_imm_to_acc_encoding(byte_stream: &mut ByteStream) {
     let instruction: &str = ARITHMETIC_INSTRUCTION_ENCODINGS[instruction_index];
 
     let immediate: u16 = if w_bit == 1 {
-        grab_word(byte_stream)
+        grab_word(machine_code, &mut registers.ip)
     } else {
-        grab_byte(byte_stream) as u16
+        grab_byte(machine_code, &mut registers.ip) as u16
     };
 
     let field: &str = if w_bit == 1 { "ax" } else { "al" };
@@ -941,15 +929,53 @@ const CONDITIONAL_JUMP_INSTRUCTION_ENCODINGS: &'static [&str] = &[
     "js", "jns", "jp", "jnp", "jl", "jnl", "jle", "jg"
 ];
 
-fn decode_conditional_jump_encoding(byte_stream: &mut ByteStream) {
-    let byte: u8 = grab_byte(byte_stream);
+fn unimplemented_conditional_jump_instruction_test(_flags_register: u16) -> bool {
+    debug_assert!(false);
+    return false;
+}
+
+fn je_test(flags_register: u16) -> bool {
+    return flags_register & ZF_FLAG_BIT != 0;
+}
+
+fn jne_test(flags_register: u16) -> bool {
+    return flags_register & ZF_FLAG_BIT == 0;
+}
+
+type ConditionalJumpInstructionTestFn = fn(u16) -> bool;
+const CONDITIONAL_JUMP_INSTRUCTION_TEST_FNS: &'static [ConditionalJumpInstructionTestFn] = &[
+    unimplemented_conditional_jump_instruction_test,
+    unimplemented_conditional_jump_instruction_test,
+    unimplemented_conditional_jump_instruction_test,
+    unimplemented_conditional_jump_instruction_test,
+    je_test,
+    jne_test,
+    unimplemented_conditional_jump_instruction_test,
+    unimplemented_conditional_jump_instruction_test,
+    unimplemented_conditional_jump_instruction_test,
+    unimplemented_conditional_jump_instruction_test,
+    unimplemented_conditional_jump_instruction_test,
+    unimplemented_conditional_jump_instruction_test,
+    unimplemented_conditional_jump_instruction_test,
+    unimplemented_conditional_jump_instruction_test,
+    unimplemented_conditional_jump_instruction_test,
+    unimplemented_conditional_jump_instruction_test
+];
+
+fn decode_conditional_jump_encoding(machine_code: &[u8], registers: &mut Registers) {
+    let byte: u8 = grab_byte(machine_code, &mut registers.ip);
 
     let instruction_index: usize = (byte & 0x0F) as usize;
     debug_assert!(instruction_index < CONDITIONAL_JUMP_INSTRUCTION_ENCODINGS.len());
 
     let instruction: &str = CONDITIONAL_JUMP_INSTRUCTION_ENCODINGS[instruction_index];
 
-    let offset: i8 = grab_byte(byte_stream) as i8;
+    let offset: i8 = grab_byte(machine_code, &mut registers.ip) as i8;
+
+    let jump_test: ConditionalJumpInstructionTestFn = CONDITIONAL_JUMP_INSTRUCTION_TEST_FNS[instruction_index];
+    if jump_test(registers.flags) {
+        registers.ip = registers.ip.wrapping_add(offset as u16);
+    }
 
     println!("{} {}", instruction, offset);
 }
@@ -960,54 +986,78 @@ const LOOP_INSTRUCTION_ENCODINGS: &'static [&str] = &[
     "loopnz", "loopz", "loop", "jcxz"
 ];
 
-fn decode_loop_encoding(byte_stream: &mut ByteStream) {
-    let byte: u8 = grab_byte(byte_stream);
+fn loopnz_test(registers: &mut Registers) -> bool {
+    return registers.flags & ZF_FLAG_BIT == 0;
+}
+
+fn loopz_test(registers: &mut Registers) -> bool {
+    return registers.flags & ZF_FLAG_BIT != 0;
+}
+
+fn loop_test(_registers: &mut Registers) -> bool {
+    return true;
+}
+
+fn jcxz_test(registers: &mut Registers) -> bool {
+    return registers.cx == 0;
+}
+
+type LoopInstructionTestFn = fn(&mut Registers) -> bool;
+const LOOP_INSTRUCTION_TEST_FNS: &'static [LoopInstructionTestFn] = &[
+    loopnz_test, loopz_test, loop_test, jcxz_test
+];
+
+fn decode_loop_encoding(machine_code: &[u8], registers: &mut Registers) {
+    let byte: u8 = grab_byte(machine_code, &mut registers.ip);
 
     let instruction_index: usize = (byte & 0x03) as usize;
     debug_assert!(instruction_index < LOOP_INSTRUCTION_ENCODINGS.len());
 
     let instruction: &str = LOOP_INSTRUCTION_ENCODINGS[instruction_index];
 
-    let offset: i8 = grab_byte(byte_stream) as i8;
+    let offset: i8 = grab_byte(machine_code, &mut registers.ip) as i8;
+
+    let loop_test: LoopInstructionTestFn = LOOP_INSTRUCTION_TEST_FNS[instruction_index];
+    if loop_test(registers) {
+        registers.ip = registers.ip.wrapping_add(offset as u16);
+    }
 
     println!("{} {}", instruction, offset);
 }
 
 fn main() {
     let input_file = env::args().nth(1).expect("Please specify an input file");
-    let bytes: Vec<u8> = fs::read(input_file).expect("Missing instruction stream file");
-
-    let mut byte_stream = ByteStream{bytes: bytes, index: 0};
+    let machine_code: Vec<u8> = fs::read(input_file).expect("Missing instruction stream file");
 
     let mut registers = Registers{
-        ax: 0, bx: 0, cx: 0, dx: 0, sp: 0, bp: 0, si: 0, di: 0, flags: 0
+        ax: 0, bx: 0, cx: 0, dx: 0, sp: 0, bp: 0, si: 0, di: 0, ip: 0, flags: 0
     };
 
     println!("bits 16");
 
-    let byte_count: usize = byte_stream.bytes.len();
-    while byte_stream.index < byte_count {
-        let byte: u8 = peek_byte(&byte_stream);
+    let byte_count: usize = machine_code.len();
+    while (registers.ip as usize) < byte_count {
+        let byte: u8 = machine_code[registers.ip as usize];
         if byte & 0xFC == MOV_REG_MEM_TO_FROM_REG_BITS {
-            decode_mov_mem_reg_to_from_reg_encoding(&mut byte_stream, &mut registers);
+            decode_mov_mem_reg_to_from_reg_encoding(&machine_code, &mut registers);
         } else if byte & 0xFE == MOV_IMM_TO_REG_MEM_BITS {
-            decode_mov_imm_to_reg_mem_encoding(&mut byte_stream);
+            decode_mov_imm_to_reg_mem_encoding(&machine_code, &mut registers);
         } else if byte & 0xF0 == MOV_IMM_TO_REG_BITS {
-            decode_mov_imm_to_reg_encoding(&mut byte_stream, &mut registers);
+            decode_mov_imm_to_reg_encoding(&machine_code, &mut registers);
         } else if byte & 0xFE == MOV_MEM_TO_ACC_BITS {
-            decode_mov_mem_to_acc_encoding(&mut byte_stream);
+            decode_mov_mem_to_acc_encoding(&machine_code, &mut registers);
         } else if byte & 0xFE == MOV_ACC_TO_MEM_BITS {
-            decode_mov_acc_to_mem_encoding(&mut byte_stream);
+            decode_mov_acc_to_mem_encoding(&machine_code, &mut registers);
         } else if byte & 0xC4 == ARITHMETIC_REG_MEM_WITH_REG_TO_EITHER_BITS {
-            decode_arithmetic_mem_reg_with_reg_to_either_encoding(&mut byte_stream, &mut registers);
+            decode_arithmetic_mem_reg_with_reg_to_either_encoding(&machine_code, &mut registers);
         } else if byte & 0xFC == ARITHMETIC_IMM_TO_REG_MEM_BITS {
-            decode_arithmetic_signed_imm_to_reg_encoding(&mut byte_stream, &mut registers);
+            decode_arithmetic_signed_imm_to_reg_encoding(&machine_code, &mut registers);
         } else if byte & 0xC4 == ARITHMETIC_IMM_TO_ACC_BITS {
-            decode_arithmetic_imm_to_acc_encoding(&mut byte_stream);
+            decode_arithmetic_imm_to_acc_encoding(&machine_code, &mut registers);
         } else if byte & 0xF0 == CONDITIONAL_JUMP_INSTRUCTION_BITS {
-            decode_conditional_jump_encoding(&mut byte_stream);
+            decode_conditional_jump_encoding(&machine_code, &mut registers);
         } else if byte & 0xF0 == LOOP_INSTRUCTION_BITS {
-            decode_loop_encoding(&mut byte_stream);
+            decode_loop_encoding(&machine_code, &mut registers);
         } else {
             debug_assert!(false);   // Not handling any other instructions atm
         }
