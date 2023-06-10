@@ -13,3 +13,5 @@ test_asm/listing_0049_conditional_jumps
 test_asm/listing_0051_memory_mov
 test_asm/listing_0052_memory_add_loop
 test_asm/listing_0053_add_loop_challenge
+test_asm/listing_0054_draw_rectangle
+test_asm/listing_0055_challenge_rectangle

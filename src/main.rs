@@ -338,8 +338,7 @@ const OPS: &'static [Op; 256] = &[
     unimplemented_op,
     unimplemented_op,
     unimplemented_op,
-    unimplemented_op,
-
+    unimplemented_op
 ];
 
 fn main() {

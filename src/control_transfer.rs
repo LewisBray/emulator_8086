@@ -69,8 +69,9 @@ fn loopz_test(registers: &mut Registers) -> bool {
     return registers.flags & ZF_FLAG_BIT == 0;
 }
 
-fn loop_test(_registers: &mut Registers) -> bool {
-    return true;
+fn loop_test(registers: &mut Registers) -> bool {
+    registers.cx -= 1;
+    return registers.cx != 0;
 }
 
 fn jcxz_test(registers: &mut Registers) -> bool {
