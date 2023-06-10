@@ -2,10 +2,11 @@ use crate::registers::*;
 use crate::memory::*;
 use crate::mode::*;
 
-pub fn decode_mov_mem_reg_to_from_reg_encoding(registers: &mut Registers, memory: &mut Memory) {
+pub fn mov_mem_reg_to_from_reg_16_bit(registers: &mut Registers, memory: &mut Memory) {
     let byte: u8 = grab_instruction_byte(memory, &mut registers.ip);
     let d_bit: u8 = (byte & 0x2) >> 1;  // 1 <=> reg field gives destination
     let w_bit: u8 = byte & 0x1;         // 1 <=> wide version of instruction
+    debug_assert!(w_bit == 1);
     
     let byte: u8 = grab_instruction_byte(memory, &mut registers.ip);
 
@@ -13,48 +14,10 @@ pub fn decode_mov_mem_reg_to_from_reg_encoding(registers: &mut Registers, memory
     let reg_field: u8 = (byte & 0x38) >> 3;
     let rm_field: u8 = byte & 0x07;
 
-    if w_bit == 1 {
-        match mod_field {
-            MODE_MEM_NO_DISP => {
-                if rm_field == 6 {
-                    let address: u16 = grab_instruction_word(memory, &mut registers.ip);
-                    if d_bit == 1 {
-                        let value: u16 = load_word(memory, address);
-                        set_16_bit_register(registers, reg_field, value);
-                    } else {
-                        let value: u16 = get_16_bit_register(registers, reg_field);
-                        store_word(memory, address, value);
-                    }
-
-                    let field: &str = REG_FIELD_ENCODINGS_16_BIT[reg_field as usize];
-                    if d_bit == 1 {
-                        println!("mov {}, [{}]", field, address);
-                    } else {
-                        println!("mov [{}], {}", address, field);
-                    }
-                } else {
-                    let address: u16 = calculate_reg_expression(registers, rm_field);
-                    if d_bit == 1 {
-                        let value: u16 = load_word(memory, address);
-                        set_16_bit_register(registers, reg_field, value);
-                    } else {
-                        let value: u16 = get_16_bit_register(registers, reg_field);
-                        store_word(memory, address, value);
-                    }
-
-                    let field: &str = REG_FIELD_ENCODINGS_16_BIT[reg_field as usize];
-                    let expression: &str = REG_EXPRESSION_ENCODINGS[rm_field as usize];
-                    if d_bit == 1 {
-                        println!("mov {}, [{}]", field, expression);
-                    } else {
-                        println!("mov [{}], {}", expression, field);
-                    }
-                }
-            },
-            MODE_MEM_8_BIT_DISP => {
-                let displacement: i8 = grab_instruction_byte(memory, &mut registers.ip) as i8;
-                let reg_expression: u16 = calculate_reg_expression(registers, rm_field);
-                let address: u16 = reg_expression.wrapping_add(displacement as u16);
+    match mod_field {
+        MODE_MEM_NO_DISP => {
+            if rm_field == 6 {
+                let address: u16 = grab_instruction_word(memory, &mut registers.ip);
                 if d_bit == 1 {
                     let value: u16 = load_word(memory, address);
                     set_16_bit_register(registers, reg_field, value);
@@ -63,112 +26,125 @@ pub fn decode_mov_mem_reg_to_from_reg_encoding(registers: &mut Registers, memory
                     store_word(memory, address, value);
                 }
 
-                let sign: char = if displacement > 0 { '+' } else { '-' };
                 let field: &str = REG_FIELD_ENCODINGS_16_BIT[reg_field as usize];
-                let expression: &str = REG_EXPRESSION_ENCODINGS[rm_field as usize];
                 if d_bit == 1 {
-                    if displacement != 0 {
-                        println!("mov {}, [{} {} {}]", field, expression, sign, displacement.abs());
-                    } else {
-                        println!("mov {}, [{}]", field, expression);
-                    }
+                    println!("mov {}, [{}]", field, address);
                 } else {
-                    if displacement != 0 {
-                        println!("mov [{} {} {}], {}", expression, sign, displacement.abs(), field);
-                    } else {
-                        println!("mov [{}], {}", expression, field);
-                    }
+                    println!("mov [{}], {}", address, field);
                 }
-            },
-            MODE_MEM_16_BIT_DISP => {
-                let displacement: i16 = grab_instruction_word(memory, &mut registers.ip) as i16;
-                let reg_expression: u16 = calculate_reg_expression(registers, rm_field);
-                let address: u16 = reg_expression.wrapping_add(displacement as u16);
+            } else {
+                let address: u16 = calculate_reg_expression(registers, rm_field);
                 if d_bit == 1 {
                     let value: u16 = load_word(memory, address);
                     set_16_bit_register(registers, reg_field, value);
                 } else {
                     let value: u16 = get_16_bit_register(registers, reg_field);
-                    store_word(memory, address,value);
+                    store_word(memory, address, value);
                 }
 
-                let sign: char = if displacement > 0 { '+' } else { '-' };
                 let field: &str = REG_FIELD_ENCODINGS_16_BIT[reg_field as usize];
                 let expression: &str = REG_EXPRESSION_ENCODINGS[rm_field as usize];
                 if d_bit == 1 {
-                    if displacement != 0 {
-                        println!("mov {}, [{} {} {}]", field, expression, sign, displacement.abs());
-                    } else {
-                        println!("mov {}, [{}]", field, expression);
-                    }
+                    println!("mov {}, [{}]", field, expression);
                 } else {
-                    if displacement != 0 {
-                        println!("mov [{} {} {}], {}", expression, sign, displacement.abs(), field);
-                    } else {
-                        println!("mov [{}], {}", expression, field);
-                    }
+                    println!("mov [{}], {}", expression, field);
                 }
-            },
-            MODE_REG => {
-                let (source_field, destination_field): (u8, u8) = if d_bit == 1 {
-                    (rm_field, reg_field)
-                } else {
-                    (reg_field, rm_field)
-                };
-
-                let value: u16 = get_16_bit_register(registers, source_field);
-                set_16_bit_register(registers, destination_field, value);
-
-                let source: &str = REG_FIELD_ENCODINGS_16_BIT[source_field as usize];
-                let destination: &str = REG_FIELD_ENCODINGS_16_BIT[destination_field as usize];
-                println!("mov {}, {}", destination, source);
-            },
-            _ => {
-                debug_assert!(false);
             }
-        }
-    } else {
-        match mod_field {
-            MODE_MEM_NO_DISP => {
-                if rm_field == 6 {
-                    let address: u16 = grab_instruction_word(memory, &mut registers.ip);
-                    if d_bit == 1 {
-                        let value: u8 = load_byte(memory, address);
-                        set_8_bit_register(registers, reg_field, value);
-                    } else {
-                        let value: u8 = get_8_bit_register(registers, reg_field);
-                        store_byte(memory, address, value);
-                    }
+        },
+        MODE_MEM_8_BIT_DISP => {
+            let displacement: i8 = grab_instruction_byte(memory, &mut registers.ip) as i8;
+            let reg_expression: u16 = calculate_reg_expression(registers, rm_field);
+            let address: u16 = reg_expression.wrapping_add(displacement as u16);
+            if d_bit == 1 {
+                let value: u16 = load_word(memory, address);
+                set_16_bit_register(registers, reg_field, value);
+            } else {
+                let value: u16 = get_16_bit_register(registers, reg_field);
+                store_word(memory, address, value);
+            }
 
-                    let field: &str = REG_FIELD_ENCODINGS_8_BIT[reg_field as usize];
-                    if d_bit == 1 {
-                        println!("mov {}, [{}]", field, address);
-                    } else {
-                        println!("mov [{}], {}", address, field);
-                    }
+            let sign: char = if displacement > 0 { '+' } else { '-' };
+            let field: &str = REG_FIELD_ENCODINGS_16_BIT[reg_field as usize];
+            let expression: &str = REG_EXPRESSION_ENCODINGS[rm_field as usize];
+            if d_bit == 1 {
+                if displacement != 0 {
+                    println!("mov {}, [{} {} {}]", field, expression, sign, displacement.abs());
                 } else {
-                    let address: u16 = calculate_reg_expression(registers, rm_field);
-                    if d_bit == 1 {
-                        let value: u8 = load_byte(memory, address);
-                        set_8_bit_register(registers, reg_field, value);
-                    } else {
-                        let value: u8 = get_8_bit_register(registers, reg_field);
-                        store_byte(memory, address, value);
-                    }
-
-                    let field: &str = REG_FIELD_ENCODINGS_8_BIT[reg_field as usize];
-                    let expression: &str = REG_EXPRESSION_ENCODINGS[rm_field as usize];
-                    if d_bit == 1 {
-                        println!("mov {}, [{}]", field, expression);
-                    } else {
-                        println!("mov [{}], {}", expression, field);
-                    }
+                    println!("mov {}, [{}]", field, expression);
                 }
-            },
-            MODE_MEM_8_BIT_DISP => {
-                let displacement: i8 = grab_instruction_byte(memory, &mut registers.ip) as i8;
-                let reg_expression: u16 = calculate_reg_expression(registers, rm_field);
-                let address: u16 = reg_expression.wrapping_add(displacement as u16);
+            } else {
+                if displacement != 0 {
+                    println!("mov [{} {} {}], {}", expression, sign, displacement.abs(), field);
+                } else {
+                    println!("mov [{}], {}", expression, field);
+                }
+            }
+        },
+        MODE_MEM_16_BIT_DISP => {
+            let displacement: i16 = grab_instruction_word(memory, &mut registers.ip) as i16;
+            let reg_expression: u16 = calculate_reg_expression(registers, rm_field);
+            let address: u16 = reg_expression.wrapping_add(displacement as u16);
+            if d_bit == 1 {
+                let value: u16 = load_word(memory, address);
+                set_16_bit_register(registers, reg_field, value);
+            } else {
+                let value: u16 = get_16_bit_register(registers, reg_field);
+                store_word(memory, address,value);
+            }
+
+            let sign: char = if displacement > 0 { '+' } else { '-' };
+            let field: &str = REG_FIELD_ENCODINGS_16_BIT[reg_field as usize];
+            let expression: &str = REG_EXPRESSION_ENCODINGS[rm_field as usize];
+            if d_bit == 1 {
+                if displacement != 0 {
+                    println!("mov {}, [{} {} {}]", field, expression, sign, displacement.abs());
+                } else {
+                    println!("mov {}, [{}]", field, expression);
+                }
+            } else {
+                if displacement != 0 {
+                    println!("mov [{} {} {}], {}", expression, sign, displacement.abs(), field);
+                } else {
+                    println!("mov [{}], {}", expression, field);
+                }
+            }
+        },
+        MODE_REG => {
+            let (source_field, destination_field): (u8, u8) = if d_bit == 1 {
+                (rm_field, reg_field)
+            } else {
+                (reg_field, rm_field)
+            };
+
+            let value: u16 = get_16_bit_register(registers, source_field);
+            set_16_bit_register(registers, destination_field, value);
+
+            let source: &str = REG_FIELD_ENCODINGS_16_BIT[source_field as usize];
+            let destination: &str = REG_FIELD_ENCODINGS_16_BIT[destination_field as usize];
+            println!("mov {}, {}", destination, source);
+        },
+        _ => {
+            debug_assert!(false);
+        }
+    }
+}
+
+pub fn mov_mem_reg_to_from_reg_8_bit(registers: &mut Registers, memory: &mut Memory) {
+    let byte: u8 = grab_instruction_byte(memory, &mut registers.ip);
+    let d_bit: u8 = (byte & 0x2) >> 1;  // 1 <=> reg field gives destination
+    let w_bit: u8 = byte & 0x1;         // 1 <=> wide version of instruction
+    debug_assert!(w_bit == 0);
+    
+    let byte: u8 = grab_instruction_byte(memory, &mut registers.ip);
+
+    let mod_field: u8 = (byte & 0xC0) >> 6;
+    let reg_field: u8 = (byte & 0x38) >> 3;
+    let rm_field: u8 = byte & 0x07;
+
+    match mod_field {
+        MODE_MEM_NO_DISP => {
+            if rm_field == 6 {
+                let address: u16 = grab_instruction_word(memory, &mut registers.ip);
                 if d_bit == 1 {
                     let value: u8 = load_byte(memory, address);
                     set_8_bit_register(registers, reg_field, value);
@@ -177,246 +153,308 @@ pub fn decode_mov_mem_reg_to_from_reg_encoding(registers: &mut Registers, memory
                     store_byte(memory, address, value);
                 }
 
-                let sign: char = if displacement > 0 { '+' } else { '-' };
                 let field: &str = REG_FIELD_ENCODINGS_8_BIT[reg_field as usize];
-                let expression: &str = REG_EXPRESSION_ENCODINGS[rm_field as usize];
                 if d_bit == 1 {
-                    if displacement != 0 {
-                        println!("mov {}, [{} {} {}]", field, expression, sign, displacement.abs());
-                    } else {
-                        println!("mov {}, [{}]", field, expression);
-                    }
+                    println!("mov {}, [{}]", field, address);
                 } else {
-                    if displacement != 0 {
-                        println!("mov [{} {} {}], {}", expression, sign, displacement.abs(), field);
-                    } else {
-                        println!("mov [{}], {}", expression, field);
-                    }
+                    println!("mov [{}], {}", address, field);
                 }
-            },
-            MODE_MEM_16_BIT_DISP => {
-                let displacement: i16 = grab_instruction_word(memory, &mut registers.ip) as i16;
-                let reg_expression: u16 = calculate_reg_expression(registers, rm_field);
-                let address: u16 = reg_expression.wrapping_add(displacement as u16);
+            } else {
+                let address: u16 = calculate_reg_expression(registers, rm_field);
                 if d_bit == 1 {
                     let value: u8 = load_byte(memory, address);
                     set_8_bit_register(registers, reg_field, value);
                 } else {
                     let value: u8 = get_8_bit_register(registers, reg_field);
-                    store_byte(memory, address,value);
+                    store_byte(memory, address, value);
                 }
 
-                let sign: char = if displacement > 0 { '+' } else { '-' };
                 let field: &str = REG_FIELD_ENCODINGS_8_BIT[reg_field as usize];
                 let expression: &str = REG_EXPRESSION_ENCODINGS[rm_field as usize];
                 if d_bit == 1 {
-                    if displacement != 0 {
-                        println!("mov {}, [{} {} {}]", field, expression, sign, displacement.abs());
-                    } else {
-                        println!("mov {}, [{}]", field, expression);
-                    }
+                    println!("mov {}, [{}]", field, expression);
                 } else {
-                    if displacement != 0 {
-                        println!("mov [{} {} {}], {}", expression, sign, displacement.abs(), field);
-                    } else {
-                        println!("mov [{}], {}", expression, field);
-                    }
+                    println!("mov [{}], {}", expression, field);
                 }
-            },
-            MODE_REG => {
-                let (source_field, destination_field): (u8, u8) = if d_bit == 1 {
-                    (rm_field, reg_field)
-                } else {
-                    (reg_field, rm_field)
-                };
-
-                let value: u8 = get_8_bit_register(registers, source_field);
-                set_8_bit_register(registers, destination_field, value);
-
-                let source: &str = REG_FIELD_ENCODINGS_8_BIT[source_field as usize];
-                let destination: &str = REG_FIELD_ENCODINGS_8_BIT[destination_field as usize];
-                println!("mov {}, {}", destination, source);
-            },
-            _ => {
-                debug_assert!(false);
             }
+        },
+        MODE_MEM_8_BIT_DISP => {
+            let displacement: i8 = grab_instruction_byte(memory, &mut registers.ip) as i8;
+            let reg_expression: u16 = calculate_reg_expression(registers, rm_field);
+            let address: u16 = reg_expression.wrapping_add(displacement as u16);
+            if d_bit == 1 {
+                let value: u8 = load_byte(memory, address);
+                set_8_bit_register(registers, reg_field, value);
+            } else {
+                let value: u8 = get_8_bit_register(registers, reg_field);
+                store_byte(memory, address, value);
+            }
+
+            let sign: char = if displacement > 0 { '+' } else { '-' };
+            let field: &str = REG_FIELD_ENCODINGS_8_BIT[reg_field as usize];
+            let expression: &str = REG_EXPRESSION_ENCODINGS[rm_field as usize];
+            if d_bit == 1 {
+                if displacement != 0 {
+                    println!("mov {}, [{} {} {}]", field, expression, sign, displacement.abs());
+                } else {
+                    println!("mov {}, [{}]", field, expression);
+                }
+            } else {
+                if displacement != 0 {
+                    println!("mov [{} {} {}], {}", expression, sign, displacement.abs(), field);
+                } else {
+                    println!("mov [{}], {}", expression, field);
+                }
+            }
+        },
+        MODE_MEM_16_BIT_DISP => {
+            let displacement: i16 = grab_instruction_word(memory, &mut registers.ip) as i16;
+            let reg_expression: u16 = calculate_reg_expression(registers, rm_field);
+            let address: u16 = reg_expression.wrapping_add(displacement as u16);
+            if d_bit == 1 {
+                let value: u8 = load_byte(memory, address);
+                set_8_bit_register(registers, reg_field, value);
+            } else {
+                let value: u8 = get_8_bit_register(registers, reg_field);
+                store_byte(memory, address,value);
+            }
+
+            let sign: char = if displacement > 0 { '+' } else { '-' };
+            let field: &str = REG_FIELD_ENCODINGS_8_BIT[reg_field as usize];
+            let expression: &str = REG_EXPRESSION_ENCODINGS[rm_field as usize];
+            if d_bit == 1 {
+                if displacement != 0 {
+                    println!("mov {}, [{} {} {}]", field, expression, sign, displacement.abs());
+                } else {
+                    println!("mov {}, [{}]", field, expression);
+                }
+            } else {
+                if displacement != 0 {
+                    println!("mov [{} {} {}], {}", expression, sign, displacement.abs(), field);
+                } else {
+                    println!("mov [{}], {}", expression, field);
+                }
+            }
+        },
+        MODE_REG => {
+            let (source_field, destination_field): (u8, u8) = if d_bit == 1 {
+                (rm_field, reg_field)
+            } else {
+                (reg_field, rm_field)
+            };
+
+            let value: u8 = get_8_bit_register(registers, source_field);
+            set_8_bit_register(registers, destination_field, value);
+
+            let source: &str = REG_FIELD_ENCODINGS_8_BIT[source_field as usize];
+            let destination: &str = REG_FIELD_ENCODINGS_8_BIT[destination_field as usize];
+            println!("mov {}, {}", destination, source);
+        },
+        _ => {
+            debug_assert!(false);
         }
     }
 }
 
-pub fn decode_mov_imm_to_reg_mem_encoding(registers: &mut Registers, memory: &mut Memory) {
+pub fn mov_imm_to_reg_mem_16_bit(registers: &mut Registers, memory: &mut Memory) {
     let byte: u8 = grab_instruction_byte(memory, &mut registers.ip);
     let w_bit: u8 = byte & 0x01;
+    debug_assert!(w_bit == 1);
 
     let byte: u8 = grab_instruction_byte(memory, &mut registers.ip);
     debug_assert!(byte & 0x38 == 0);
     let mod_field: u8 = (byte & 0xC0) >> 6;
     let rm_field: u8 = byte & 0x07;
 
-    if w_bit == 1 {
-        match mod_field {
-            MODE_MEM_NO_DISP => {
-                if rm_field == 6 {
-                    let address: u16 = grab_instruction_word(memory, &mut registers.ip);
-                    let data: u16 = grab_instruction_word(memory, &mut registers.ip);
-                    store_word(memory, address, data);
-
-                    println!("mov [{}], word {}", address, data);
-                } else {
-                    let address: u16 = calculate_reg_expression(registers, rm_field);
-                    let data: u16 = grab_instruction_word(memory, &mut registers.ip);
-                    store_word(memory, address, data);
-
-                    let expression: &str = REG_EXPRESSION_ENCODINGS[rm_field as usize];
-                    println!("mov [{}], word {}", expression, data);
-                }
-            },
-            MODE_MEM_8_BIT_DISP => {
-                let displacement: i8 = grab_instruction_byte(memory, &mut registers.ip) as i8;
+    match mod_field {
+        MODE_MEM_NO_DISP => {
+            if rm_field == 6 {
+                let address: u16 = grab_instruction_word(memory, &mut registers.ip);
                 let data: u16 = grab_instruction_word(memory, &mut registers.ip);
-
-                let reg_expression: u16 = calculate_reg_expression(registers, rm_field);                
-                let address: u16 = reg_expression.wrapping_add(displacement as u16);
                 store_word(memory, address, data);
 
-                let sign: char = if displacement > 0 { '+' } else { '-' };
-                let expression: &str = REG_EXPRESSION_ENCODINGS[rm_field as usize];
-                println!("mov [{} {} {}], word {}", expression, sign, displacement.abs(), data);
-            },
-            MODE_MEM_16_BIT_DISP => {
-                let displacement: i16 = grab_instruction_word(memory, &mut registers.ip) as i16;
+                println!("mov [{}], word {}", address, data);
+            } else {
+                let address: u16 = calculate_reg_expression(registers, rm_field);
                 let data: u16 = grab_instruction_word(memory, &mut registers.ip);
+                store_word(memory, address, data);
 
-                let reg_expression: u16 = calculate_reg_expression(registers, rm_field);                
-                let address: u16 = reg_expression.wrapping_add(displacement as u16);
-                store_word(memory, address, data);                
-
-                let sign: char = if displacement > 0 { '+' } else { '-' };
                 let expression: &str = REG_EXPRESSION_ENCODINGS[rm_field as usize];
-                println!("mov [{} {} {}], word {}", expression, sign, displacement.abs(), data);
-            },
-            MODE_REG => {
-                let data: u16 = grab_instruction_word(memory, &mut registers.ip);
-                set_16_bit_register(registers, rm_field, data);
-
-                let destination: &str = REG_FIELD_ENCODINGS_16_BIT[rm_field as usize];
-                println!("mov {}, {}", destination, data);
-            },
-            _ => {
-                debug_assert!(false);
+                println!("mov [{}], word {}", expression, data);
             }
-        }
-    } else {
-        match mod_field {
-            MODE_MEM_NO_DISP => {
-                if rm_field == 6 {
-                    let address: u16 = grab_instruction_word(memory, &mut registers.ip);
-                    let data: u8 = grab_instruction_byte(memory, &mut registers.ip);
-                    store_byte(memory, address, data);
+        },
+        MODE_MEM_8_BIT_DISP => {
+            let displacement: i8 = grab_instruction_byte(memory, &mut registers.ip) as i8;
+            let data: u16 = grab_instruction_word(memory, &mut registers.ip);
 
-                    println!("mov [{}], byte {}", address, data);
-                } else {
-                    let address: u16 = calculate_reg_expression(registers, rm_field);
-                    let data: u8 = grab_instruction_byte(memory, &mut registers.ip);
-                    store_byte(memory, address, data);
+            let reg_expression: u16 = calculate_reg_expression(registers, rm_field);                
+            let address: u16 = reg_expression.wrapping_add(displacement as u16);
+            store_word(memory, address, data);
 
-                    let expression: &str = REG_EXPRESSION_ENCODINGS[rm_field as usize];
-                    println!("mov [{}], byte {}", expression, data);
-                }
-            },
-            MODE_MEM_8_BIT_DISP => {
-                let displacement: i8 = grab_instruction_byte(memory, &mut registers.ip) as i8;
-                let data: u8 = grab_instruction_byte(memory, &mut registers.ip);
+            let sign: char = if displacement > 0 { '+' } else { '-' };
+            let expression: &str = REG_EXPRESSION_ENCODINGS[rm_field as usize];
+            println!("mov [{} {} {}], word {}", expression, sign, displacement.abs(), data);
+        },
+        MODE_MEM_16_BIT_DISP => {
+            let displacement: i16 = grab_instruction_word(memory, &mut registers.ip) as i16;
+            let data: u16 = grab_instruction_word(memory, &mut registers.ip);
 
-                let reg_expression: u16 = calculate_reg_expression(registers, rm_field);
-                let address: u16 = reg_expression.wrapping_add(displacement as u16);
-                store_byte(memory, address, data);
+            let reg_expression: u16 = calculate_reg_expression(registers, rm_field);                
+            let address: u16 = reg_expression.wrapping_add(displacement as u16);
+            store_word(memory, address, data);                
 
-                let sign: char = if displacement > 0 { '+' } else { '-' };
-                let expression: &str = REG_EXPRESSION_ENCODINGS[rm_field as usize];
-                println!("mov [{} {} {}], byte {}", expression, sign, displacement.abs(), data);
-            },
-            MODE_MEM_16_BIT_DISP => {
-                let displacement: i16 = grab_instruction_word(memory, &mut registers.ip) as i16;
-                let data: u8 = grab_instruction_byte(memory, &mut registers.ip);
+            let sign: char = if displacement > 0 { '+' } else { '-' };
+            let expression: &str = REG_EXPRESSION_ENCODINGS[rm_field as usize];
+            println!("mov [{} {} {}], word {}", expression, sign, displacement.abs(), data);
+        },
+        MODE_REG => {
+            let data: u16 = grab_instruction_word(memory, &mut registers.ip);
+            set_16_bit_register(registers, rm_field, data);
 
-                let reg_expression: u16 = calculate_reg_expression(registers, rm_field);
-                let address: u16 = reg_expression.wrapping_add(displacement as u16);
-                store_byte(memory, address, data);
-
-                let sign: char = if displacement > 0 { '+' } else { '-' };
-                let expression: &str = REG_EXPRESSION_ENCODINGS[rm_field as usize];
-                println!("mov [{} {} {}], byte {}", expression, sign, displacement.abs(), data);
-            },
-            MODE_REG => {
-                let data: u8 = grab_instruction_byte(memory, &mut registers.ip);
-                set_8_bit_register(registers, rm_field, data);
-
-                let destination: &str = REG_FIELD_ENCODINGS_8_BIT[rm_field as usize];
-                println!("mov {}, {}", destination, data);
-            },
-            _ => {
-                debug_assert!(false);
-            }
+            let destination: &str = REG_FIELD_ENCODINGS_16_BIT[rm_field as usize];
+            println!("mov {}, {}", destination, data);
+        },
+        _ => {
+            debug_assert!(false);
         }
     }
 }
 
-pub fn decode_mov_imm_to_reg_encoding(registers: &mut Registers, memory: &mut Memory) {
+pub fn mov_imm_to_reg_mem_8_bit(registers: &mut Registers, memory: &mut Memory) {
+    let byte: u8 = grab_instruction_byte(memory, &mut registers.ip);
+    let w_bit: u8 = byte & 0x01;
+    debug_assert!(w_bit == 0);
+
+    let byte: u8 = grab_instruction_byte(memory, &mut registers.ip);
+    debug_assert!(byte & 0x38 == 0);
+    let mod_field: u8 = (byte & 0xC0) >> 6;
+    let rm_field: u8 = byte & 0x07;
+
+    match mod_field {
+        MODE_MEM_NO_DISP => {
+            if rm_field == 6 {
+                let address: u16 = grab_instruction_word(memory, &mut registers.ip);
+                let data: u8 = grab_instruction_byte(memory, &mut registers.ip);
+                store_byte(memory, address, data);
+
+                println!("mov [{}], byte {}", address, data);
+            } else {
+                let address: u16 = calculate_reg_expression(registers, rm_field);
+                let data: u8 = grab_instruction_byte(memory, &mut registers.ip);
+                store_byte(memory, address, data);
+
+                let expression: &str = REG_EXPRESSION_ENCODINGS[rm_field as usize];
+                println!("mov [{}], byte {}", expression, data);
+            }
+        },
+        MODE_MEM_8_BIT_DISP => {
+            let displacement: i8 = grab_instruction_byte(memory, &mut registers.ip) as i8;
+            let data: u8 = grab_instruction_byte(memory, &mut registers.ip);
+
+            let reg_expression: u16 = calculate_reg_expression(registers, rm_field);
+            let address: u16 = reg_expression.wrapping_add(displacement as u16);
+            store_byte(memory, address, data);
+
+            let sign: char = if displacement > 0 { '+' } else { '-' };
+            let expression: &str = REG_EXPRESSION_ENCODINGS[rm_field as usize];
+            println!("mov [{} {} {}], byte {}", expression, sign, displacement.abs(), data);
+        },
+        MODE_MEM_16_BIT_DISP => {
+            let displacement: i16 = grab_instruction_word(memory, &mut registers.ip) as i16;
+            let data: u8 = grab_instruction_byte(memory, &mut registers.ip);
+
+            let reg_expression: u16 = calculate_reg_expression(registers, rm_field);
+            let address: u16 = reg_expression.wrapping_add(displacement as u16);
+            store_byte(memory, address, data);
+
+            let sign: char = if displacement > 0 { '+' } else { '-' };
+            let expression: &str = REG_EXPRESSION_ENCODINGS[rm_field as usize];
+            println!("mov [{} {} {}], byte {}", expression, sign, displacement.abs(), data);
+        },
+        MODE_REG => {
+            let data: u8 = grab_instruction_byte(memory, &mut registers.ip);
+            set_8_bit_register(registers, rm_field, data);
+
+            let destination: &str = REG_FIELD_ENCODINGS_8_BIT[rm_field as usize];
+            println!("mov {}, {}", destination, data);
+        },
+        _ => {
+            debug_assert!(false);
+        }
+    }
+}
+
+pub fn mov_imm_to_reg_16_bit(registers: &mut Registers, memory: &mut Memory) {
     let byte: u8 = grab_instruction_byte(memory, &mut registers.ip);
     let w_bit: u8 = (byte & 0x08) >> 3;
     let reg_field: u8 = byte & 0x07;
+    debug_assert!(w_bit == 1);
 
-    if w_bit == 1 {
-        let immediate: u16 = grab_instruction_word(memory, &mut registers.ip);
-        set_16_bit_register(registers, reg_field, immediate);
+    let immediate: u16 = grab_instruction_word(memory, &mut registers.ip);
+    set_16_bit_register(registers, reg_field, immediate);
 
-        let field: &str = REG_FIELD_ENCODINGS_16_BIT[reg_field as usize];
-        println!("mov {}, {}", field, immediate);
-    } else {
-        let immediate: u8 = grab_instruction_byte(memory, &mut registers.ip);
-        set_8_bit_register(registers, reg_field, immediate);
-
-        let field: &str = REG_FIELD_ENCODINGS_8_BIT[reg_field as usize];
-        println!("mov {}, {}", field, immediate);
-    }
+    let field: &str = REG_FIELD_ENCODINGS_16_BIT[reg_field as usize];
+    println!("mov {}, {}", field, immediate);
 }
 
-pub fn decode_mov_mem_to_acc_encoding(registers: &mut Registers, memory: &mut Memory) {
+pub fn mov_imm_to_reg_8_bit(registers: &mut Registers, memory: &mut Memory) {
     let byte: u8 = grab_instruction_byte(memory, &mut registers.ip);
-    let w_bit: u8 = byte & 0x01;
+    let w_bit: u8 = (byte & 0x08) >> 3;
+    let reg_field: u8 = byte & 0x07;
+    debug_assert!(w_bit == 0);
 
-    if w_bit == 1 {
-        let address: u16 = grab_instruction_word(memory, &mut registers.ip);
-        let data: u16 = load_word(memory, address);
-        registers.ax = data;
+    let immediate: u8 = grab_instruction_byte(memory, &mut registers.ip);
+    set_8_bit_register(registers, reg_field, immediate);
 
-        println!("mov ax, [{}]", address);
-    } else {
-        let address: u16 = grab_instruction_word(memory, &mut registers.ip);
-        let data: u8 = load_byte(memory, address);
-        registers.ax = set_low_byte(registers.ax, data);
-
-        println!("mov al, [{}]", address);
-    }
+    let field: &str = REG_FIELD_ENCODINGS_8_BIT[reg_field as usize];
+    println!("mov {}, {}", field, immediate);
 }
 
-pub fn decode_mov_acc_to_mem_encoding(registers: &mut Registers, memory: &mut Memory) {
+pub fn mov_mem_to_acc_16_bit(registers: &mut Registers, memory: &mut Memory) {
     let byte: u8 = grab_instruction_byte(memory, &mut registers.ip);
     let w_bit: u8 = byte & 0x01;
+    debug_assert!(w_bit == 1);
 
-    if w_bit == 1 {
-        let address: u16 = grab_instruction_word(memory, &mut registers.ip);
-        store_word(memory, address, registers.ax);
+    let address: u16 = grab_instruction_word(memory, &mut registers.ip);
+    let data: u16 = load_word(memory, address);
+    registers.ax = data;
 
-        println!("mov [{}], ax", address);
-    } else {
-        let address: u16 = grab_instruction_word(memory, &mut registers.ip);
-        let data: u8 = get_low_byte(registers.ax);
-        store_byte(memory, address, data);
+    println!("mov ax, [{}]", address);
+}
 
-        println!("mov [{}], ax", address);
-    }
+pub fn mov_mem_to_acc_8_bit(registers: &mut Registers, memory: &mut Memory) {
+    let byte: u8 = grab_instruction_byte(memory, &mut registers.ip);
+    let w_bit: u8 = byte & 0x01;
+    debug_assert!(w_bit == 0);
+
+    let address: u16 = grab_instruction_word(memory, &mut registers.ip);
+    let data: u8 = load_byte(memory, address);
+    registers.ax = set_low_byte(registers.ax, data);
+
+    println!("mov al, [{}]", address);
+}
+
+pub fn mov_acc_to_mem_16_bit(registers: &mut Registers, memory: &mut Memory) {
+    let byte: u8 = grab_instruction_byte(memory, &mut registers.ip);
+    let w_bit: u8 = byte & 0x01;
+    debug_assert!(w_bit == 1);
+
+    let address: u16 = grab_instruction_word(memory, &mut registers.ip);
+    store_word(memory, address, registers.ax);
+
+    println!("mov [{}], ax", address);
+}
+
+pub fn mov_acc_to_mem_8_bit(registers: &mut Registers, memory: &mut Memory) {
+    let byte: u8 = grab_instruction_byte(memory, &mut registers.ip);
+    let w_bit: u8 = byte & 0x01;
+    debug_assert!(w_bit == 0);
+
+    let address: u16 = grab_instruction_word(memory, &mut registers.ip);
+    let data: u8 = get_low_byte(registers.ax);
+    store_byte(memory, address, data);
+
+    println!("mov [{}], ax", address);
 }
 
 #[cfg(test)]
