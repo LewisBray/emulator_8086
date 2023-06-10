@@ -10,3 +10,6 @@ test_asm/listing_0046_add_sub_cmp
 test_asm/listing_0047_challenge_flags
 test_asm/listing_0048_ip_register
 test_asm/listing_0049_conditional_jumps
+test_asm/listing_0051_memory_mov
+test_asm/listing_0052_memory_add_loop
+test_asm/listing_0053_add_loop_challenge
